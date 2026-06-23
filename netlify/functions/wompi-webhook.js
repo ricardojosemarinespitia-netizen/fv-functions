@@ -25,6 +25,7 @@ const EMAILJS_TPL_CLIENTE  = "template_20wj574";  // confirmación para el clien
 const EMAILJS_PUBLIC_KEY   = "XVjxIagv23vBCkzTX";
 const EMAIL_FELIPE         = "felipevergelarteenvidrio@gmail.com";
 const FORM_ID              = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
+const VENTAS_API           = "https://script.google.com/macros/s/AKfycbznN-5jCwKFFvSeKEiFuvaqwCW2DLv7OpQm6jCmEgH8w2qHIZtTfCPNsi3saPAv7j3s/exec";
 
 const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-CO");
 const sepNum = (n) => (Number(n) || 0).toLocaleString("es-CO");
@@ -169,7 +170,21 @@ export default async (req) => {
     console.error("Correo cliente:", e);
   }
 
-  // 8) Marcar como procesado (idempotencia)
+  // 8) Marcar código de descuento como usado (si aplica)
+  if (pedido.discountCode) {
+    try {
+      await fetch(VENTAS_API, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "markUsed", code: pedido.discountCode, ref, email: pedido.email })
+      });
+    } catch (e) {
+      console.error("markUsed:", e);
+    }
+  }
+
+  // 9) Marcar como procesado (idempotencia)
   await store.setJSON(ref, { ...pedido, _status: "done", _processedAt: Date.now() });
 
   return new Response("OK", { status: 200 });
