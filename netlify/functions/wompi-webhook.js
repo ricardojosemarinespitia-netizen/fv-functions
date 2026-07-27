@@ -26,6 +26,9 @@ const EMAILJS_PUBLIC_KEY   = "XVjxIagv23vBCkzTX";
 const EMAIL_FELIPE         = "felipevergelarteenvidrio@gmail.com";
 const FORM_ID              = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
 const VENTAS_API           = "https://script.google.com/macros/s/AKfycbznN-5jCwKFFvSeKEiFuvaqwCW2DLv7OpQm6jCmEgH8w2qHIZtTfCPNsi3saPAv7j3s/exec";
+// Clave que el Apps Script exige desde el 27-jul-2026 para ESCRIBIR
+// (markUsed). Mismo secreto que usa checkout.html del sitio principal.
+const VENTAS_KEY           = "Pjh5zFh5RhYW";
 
 const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-CO");
 const sepNum = (n) => (Number(n) || 0).toLocaleString("es-CO");
@@ -274,13 +277,17 @@ export default async (req) => {
   }
 
   // 8) Marcar código de descuento como usado (si aplica)
+  //    El Apps Script (deployment AKfycbznN, la misma hoja "PAGINA WEB" que
+  //    usa el resto del sitio) dejo de aceptar escrituras sin clave el
+  //    27-jul-2026: antes cualquiera con la URL podia marcar cualquier
+  //    codigo como usado sin autorizacion. Ahora exige VENTAS_KEY.
   if (pedido.discountCode) {
     try {
       await fetch(VENTAS_API, {
         method: "POST",
         mode: "no-cors",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "markUsed", code: pedido.discountCode, ref, email: pedido.email })
+        body: JSON.stringify({ key: VENTAS_KEY, action: "markUsed", code: pedido.discountCode, ref, email: pedido.email })
       });
     } catch (e) {
       console.error("markUsed:", e);
