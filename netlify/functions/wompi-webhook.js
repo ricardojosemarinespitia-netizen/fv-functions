@@ -186,6 +186,23 @@ export default async (req) => {
     return new Response("Ya estaba procesado", { status: 200 });
   }
 
+  // 4.5) El pedido tiene que haber pasado por wompi-sign (recalculo del monto
+  //      contra el catalogo del servidor). Sin esto, alguien con el secreto de
+  //      integridad de Wompi (aunque ya no viaje en el cliente, pudo copiarse
+  //      mientras estuvo expuesto) podia llamar a save-pending con un total
+  //      inventado, firmar ese mismo monto por su cuenta y pagarlo directo en
+  //      Wompi sin pasar nunca por wompi-sign: el webhook igual registraba la
+  //      venta y mandaba los correos con el precio falso.
+  //      _serverPriced solo lo pone wompi-sign (ver save-pending.js), asi que
+  //      exigirlo aqui cierra ese camino aunque la clave vieja siga circulando.
+  if (!pedido._serverPriced) {
+    console.error(
+      "wompi-webhook: RECHAZADO, el pedido", ref, "nunca paso por wompi-sign",
+      "(_serverPriced ausente). No se registra ni se envian correos."
+    );
+    return new Response("Pedido no verificado por el servidor", { status: 409 });
+  }
+
   // 5) Armar datos
   const cart = pedido.cart || [];
   const lineas = cart
