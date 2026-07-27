@@ -1,5 +1,17 @@
+# ============================================================
+#  ROTURA EN VIVO CORREGIDA AQUI (27-jul-2026)
+#  Antes: command = "echo 'No build needed'" y el repo NO tenia
+#  package.json. Resultado: @netlify/blobs nunca se instalaba y las
+#  dos funciones reventaban en produccion con HTTP 502:
+#     GET .../.netlify/functions/wompi-webhook
+#     -> {"errorMessage":"Cannot find module '@netlify/blobs'"}
+#  Es decir, el webhook de Wompi NUNCA funciono: ningun pedido de PSE
+#  se registro en Google Forms ni genero correos si el cliente no
+#  volvia al comercio. Ahora se declara la dependencia en package.json
+#  y se instala en el build.
+# ============================================================
 [build]
-command = "echo 'No build needed'"
+command = "npm install"
 functions = "netlify/functions"
 
 [functions]
@@ -9,3 +21,20 @@ node_bundler = "esbuild"
 from = "/.netlify/functions/:name"
 to = "/.netlify/functions/:name"
 status = 200
+
+# ============================================================
+#  Cabeceras de seguridad — aqui SI se aplican (esto es Netlify).
+#  Cubren solo este host (exquisite-pasca-848b8b.netlify.app),
+#  que es donde viven save-pending, wompi-sign y wompi-webhook.
+#  El sitio publico (GitHub Pages) no las recibe: ver
+#  sitio-felipe-vergel/_headers.
+# ============================================================
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Content-Security-Policy = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"

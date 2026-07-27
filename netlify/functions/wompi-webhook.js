@@ -50,6 +50,54 @@ async function sendEmail(template_id, template_params) {
   }
 }
 
+// ── Respaldo de verificación · SOLO si falta WOMPI_EVENTS_SECRET ──────────
+//  Por que existe: antes el webhook fallaba ABIERTO (`if (secret && sig && …)`).
+//  Endurecerlo a "sin secreto -> 503 y no proceso nada" cierra el agujero, pero
+//  si esa variable no estuviera creada en Netlify el dia del despliegue se
+//  dejarian de registrar TODAS las ventas en Google Forms y de enviar los dos
+//  correos, en silencio (Wompi reintenta unas veces y desiste).
+//  En vez de creerle al POST (inseguro) o de tirarlo (rompe el negocio), se le
+//  pregunta a la fuente de verdad: la propia API de Wompi. Si Wompi confirma la
+//  transaccion con la misma referencia, estado y monto, el evento es real.
+//  Si Wompi no la confirma —o no responde— se rechaza igual que antes.
+async function confirmarConWompi(tx) {
+  if (!tx || !tx.id) return false;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const cabeceras = { "Content-Type": "application/json" };
+    // La llave publica puede viajar sin riesgo; algunos comercios la exigen.
+    const pub = process.env.WOMPI_PUBLIC_KEY;
+    if (pub) cabeceras.Authorization = "Bearer " + pub;
+
+    const r = await fetch(
+      "https://production.wompi.co/v1/transactions/" + encodeURIComponent(tx.id),
+      { headers: cabeceras, signal: ctl.signal }
+    );
+    if (!r.ok) {
+      console.error("wompi-webhook: Wompi respondio", r.status, "al confirmar", tx.id);
+      return false;
+    }
+    const j = await r.json();
+    const real = j && j.data;
+    if (!real) return false;
+
+    const refOk = String(real.reference) === String(tx.reference);
+    const estadoOk = String(real.status) === String(tx.status);
+    // El monto solo se compara si el evento lo trae (no bloquear por un campo ausente).
+    const montoOk =
+      tx.amount_in_cents == null ||
+      Number(real.amount_in_cents) === Number(tx.amount_in_cents);
+
+    return refOk && estadoOk && montoOk;
+  } catch (e) {
+    console.error("wompi-webhook: no se pudo confirmar la transaccion contra Wompi:", e.message);
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export default async (req) => {
   // 1) Leer el evento
   const raw = await req.text();
@@ -65,10 +113,22 @@ export default async (req) => {
     return new Response("Sin transacción", { status: 200 });
   }
 
-  // 2) Validar la firma del evento
+  // 2) Validar que el evento viene de Wompi — NUNCA se procesa a ciegas.
+  //    Antes esto era `if (secret && sig && ...)`: si faltaba la variable de
+  //    entorno, la validación se SALTABA y cualquier POST forjado se procesaba
+  //    como un pago real (registro en Forms + correos).
+  //
+  //    Camino normal   -> firma del evento con WOMPI_EVENTS_SECRET.
+  //    Camino degradado (sin esa variable) -> se confirma la transacción contra
+  //      la API de Wompi, para que el negocio no se caiga si la variable falta.
   const secret = process.env.WOMPI_EVENTS_SECRET;
   const sig = event.signature;
-  if (secret && sig && Array.isArray(sig.properties) && sig.checksum) {
+
+  if (secret) {
+    if (!sig || !Array.isArray(sig.properties) || !sig.checksum) {
+      return new Response("Evento sin firma", { status: 401 });
+    }
+
     const concat = sig.properties
       .map((path) => path.split(".").reduce((o, k) => (o == null ? o : o[k]), event.data))
       .join("");
@@ -77,9 +137,25 @@ export default async (req) => {
       .update(concat + event.timestamp + secret)
       .digest("hex")
       .toUpperCase();
-    if (calc !== String(sig.checksum).toUpperCase()) {
+
+    const esperado = Buffer.from(calc, "utf8");
+    const recibido = Buffer.from(String(sig.checksum).toUpperCase(), "utf8");
+    // timingSafeEqual exige la misma longitud: si no coincide, ya es firma inválida.
+    if (esperado.length !== recibido.length || !crypto.timingSafeEqual(esperado, recibido)) {
       return new Response("Firma inválida", { status: 401 });
     }
+  } else {
+    console.error(
+      "wompi-webhook: falta WOMPI_EVENTS_SECRET en Netlify (Site settings > Environment " +
+      "variables). Modo degradado: el evento se confirma contra la API de Wompi. " +
+      "Configura la variable para volver al camino normal."
+    );
+    const confirmado = await confirmarConWompi(tx);
+    if (!confirmado) {
+      console.error("wompi-webhook: RECHAZADO, Wompi no confirma", tx.id, tx.reference);
+      return new Response("Transacción no confirmada por Wompi", { status: 401 });
+    }
+    console.warn("wompi-webhook: evento aceptado por confirmación directa con Wompi:", tx.reference);
   }
 
   // 3) Solo actuamos cuando el pago está APROBADO
@@ -89,7 +165,17 @@ export default async (req) => {
 
   const ref = tx.reference;
   const store = getStore("pedidos");
-  const pedido = await store.get(ref, { type: "json" }).catch(() => null);
+  // Lectura con consistencia FUERTE: el webhook puede dispararse pocos segundos
+  // después de save-pending; con la consistencia eventual por defecto el pedido
+  // recién guardado a veces todavía no se ve y la venta se perdía sin más.
+  // (Misma corrección que ya tenía el webhook de Alejandra.)
+  let pedido = await store.get(ref, { type: "json", consistency: "strong" }).catch(() => null);
+
+  // Reintento defensivo por si aún no propagó (hasta 3 intentos, 1,5 s c/u).
+  for (let i = 0; !pedido && i < 3; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    pedido = await store.get(ref, { type: "json", consistency: "strong" }).catch(() => null);
+  }
 
   if (!pedido) {
     return new Response(`Sin pedido pendiente para ${ref}`, { status: 200 });

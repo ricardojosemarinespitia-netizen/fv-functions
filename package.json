@@ -1,0 +1,13 @@
+{
+  "name": "fv-functions",
+  "version": "1.0.0",
+  "description": "Netlify serverless functions para Felipe Vergel - firma Wompi, pedidos pendientes y webhook de pagos",
+  "private": true,
+  "_nota": "SIN \"type\": \"module\" a proposito: es la misma configuracion con la que av-functions se despliega bien. Netlify (zip-it-and-ship-it + esbuild) transpila el ESM de netlify/functions/*.js a CJS igual que antes.",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  },
+  "scripts": {
+    "catalogo": "node generar-catalogo.mjs"
+  }
+}
