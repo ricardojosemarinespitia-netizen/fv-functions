@@ -13,6 +13,16 @@
 [build]
 command = "npm install"
 functions = "netlify/functions"
+# Sin `publish`, Netlify publicaba TODO el repo como sitio estatico.
+# Verificado en vivo (HTTP 200):
+#   exquisite-pasca-848b8b.netlify.app/netlify/functions/wompi-webhook.js  (11.718 bytes)
+#   exquisite-pasca-848b8b.netlify.app/netlify/functions/wompi-sign.js     (9.222 bytes)
+#   exquisite-pasca-848b8b.netlify.app/package.json
+# O sea que el codigo de las funciones se descargaba con su URL: la misma
+# fuga que ya se cerro en av-functions. Se publica una carpeta vacia; las
+# funciones se siguen sirviendo por /.netlify/functions/*, que no depende
+# de `publish`.
+publish = "public"
 
 [functions]
 node_bundler = "esbuild"
@@ -21,6 +31,32 @@ node_bundler = "esbuild"
 from = "/.netlify/functions/:name"
 to = "/.netlify/functions/:name"
 status = 200
+
+# Cinturon y tirantes: aunque alguien vuelva a quitar `publish`,
+# estas rutas nunca se sirven como estaticas.
+[[redirects]]
+from = "/netlify/functions/*"
+to = "/index.html"
+status = 404
+force = true
+
+[[redirects]]
+from = "/package.json"
+to = "/index.html"
+status = 404
+force = true
+
+[[redirects]]
+from = "/package-lock.json"
+to = "/index.html"
+status = 404
+force = true
+
+[[redirects]]
+from = "/generar-catalogo.mjs"
+to = "/index.html"
+status = 404
+force = true
 
 # ============================================================
 #  Cabeceras de seguridad — aqui SI se aplican (esto es Netlify).
