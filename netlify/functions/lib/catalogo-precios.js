@@ -3,8 +3,8 @@
 // ------------------------------------------------------------
 //  GENERADO AUTOMATICAMENTE desde sitio-felipe-vergel/products.js
 //  con: node generar-catalogo.mjs
-//  Fecha de generacion: 2026-07-27
-//  Piezas: 36
+//  Fecha de generacion: 2026-08-11
+//  Piezas: 42
 //
 //  Por que existe: el navegador manda el carrito, y el navegador es
 //  territorio enemigo. El precio que llega en el body de la peticion
@@ -18,42 +18,48 @@
 // ============================================================
 
 export const CATALOGO = {
-  "lampara-flor-colgante": { precio: 280000, sku: "LAM-001", nombre: "Lámpara Caribe · Pieza Coleccionable" },
-  "bandeja-maxi-rect-ondas": { precio: 310000, sku: "BAN-001", nombre: "Maxi Bandeja Trama" },
-  "bandeja-hoja-maxi-irregular": { precio: 260000, sku: "BAN-002", nombre: "Hoja Orgánica Midi" },
-  "bandeja-hoja-midi-relieve": { precio: 190000, sku: "BAN-003", nombre: "Hoja Orgánica" },
-  "bandeja-hoja-jaspeada-xl": { precio: 310000, sku: "BAN-004", nombre: "Hoja Orgánica Maxi" },
-  "centro-mesa-redondo-mosaico": { precio: 190000, sku: "CEN-001", nombre: "Centro de Mesa Mosaico" },
-  "centro-mesa-ovalado-franjas": { precio: 300000, sku: "CEN-002", nombre: "Centro de Mesa Oval Vetas" },
-  "centro-mesa-ovalado-mosaico": { precio: 310000, sku: "CEN-003", nombre: "Centro de Mesa Oval Mosaico" },
-  "centro-mesa-conico-mosaico": { precio: 300000, sku: "CEN-004", nombre: "Centro de Mesa Cónico Mosaico" },
-  "centro-mesa-conico-degrade": { precio: 300000, sku: "CEN-005", nombre: "Centro de Mesa Cónico Degradé" },
-  "centro-mesa-ovalado-hojas": { precio: 300000, sku: "CEN-006", nombre: "Centro de Mesa Oval Hojas" },
-  "centro-mesa-conico-hojas": { precio: 300000, sku: "CEN-007", nombre: "Centro de Mesa Cónico Hojas" },
-  "centro-mesa-cuadrado-mosaico": { precio: 300000, sku: "CEN-008", nombre: "Centro de Mesa Cuadrado Mosaico" },
-  "centro-mesa-ovalado-liso": { precio: 280000, sku: "CEN-009", nombre: "Centro de Mesa Oval" },
-  "centro-mesa-conico-franjas": { precio: 300000, sku: "CEN-010", nombre: "Centro de Mesa Cónico Vetas" },
-  "florero-triptico": { precio: 160000, sku: "FLO-001", nombre: "Florero Tríptico" },
-  "florero-alto-irregular": { precio: 260000, sku: "FLO-002", nombre: "Florero Alto Irregular" },
-  "florero-irregular-boca-ancha": { precio: 270000, sku: "FLO-003", nombre: "Florero Ondas" },
-  "florero-diptico": { precio: 50000, sku: "FLO-004", nombre: "Díptico" },
-  "mini-florero": { precio: 50000, sku: "FLO-005", nombre: "Mini Florero" },
-  "vaso-florero": { precio: 95000, sku: "FLO-006", nombre: "Vaso Florero" },
-  "solitario-circular": { precio: 80000, sku: "SOL-001", nombre: "Solitario Circular" },
-  "solitario-guitarra": { precio: 80000, sku: "SOL-002", nombre: "Solitario Guitarra" },
-  "solitario-teja": { precio: 80000, sku: "SOL-003", nombre: "Solitario Teja" },
-  "porta-plantas-individual": { precio: 90000, sku: "PPN-001", nombre: "Porta Plantas Individual" },
-  "porta-plantas-doble": { precio: 180000, sku: "PPN-002", nombre: "Porta Plantas Doble" },
-  "porta-plantas-triple": { precio: 250000, sku: "PPN-003", nombre: "Porta Plantas Triple" },
+  "lampara-caribe-brisa": { precio: 299000, sku: "LAM-002", nombre: "Lámpara Caribe Brisa" },
+  "lampara-caribe-coral": { precio: 160000, sku: "LAM-003", nombre: "Lámpara Caribe Coral" },
+  "lampara-caribe-marea": { precio: 299000, sku: "LAM-004", nombre: "Lámpara Caribe Marea" },
+  "aplique-caribe-marea": { precio: 289000, sku: "LAM-005", nombre: "Aplique Caribe Marea" },
+  "bandeja-maxi-rect-ondas": { precio: 340000, sku: "BAN-001", nombre: "Maxi Bandeja Trama" },
+  "bandeja-hoja-maxi-irregular": { precio: 310000, sku: "CEN-014", nombre: "Hoja Orgánica Midi" },
+  "bandeja-hoja-midi-relieve": { precio: 290000, sku: "CEN-015", nombre: "Hoja Orgánica" },
+  "bandeja-hoja-jaspeada-xl": { precio: 340000, sku: "CEN-016", nombre: "Hoja Orgánica Maxi" },
+  "centro-mesa-redondo-mosaico": { precio: 210000, sku: "CEN-001", nombre: "Centro de Mesa Mosaico" },
+  "centro-mesa-ovalado-franjas": { precio: 320000, sku: "CEN-002", nombre: "Centro de Mesa Oval Vetas" },
+  "centro-mesa-ovalado-mosaico": { precio: 330000, sku: "CEN-003", nombre: "Centro de Mesa Oval Mosaico" },
+  "centro-mesa-conico-mosaico": { precio: 320000, sku: "CEN-004", nombre: "Centro de Mesa Cónico Mosaico" },
+  "centro-mesa-conico-degrade": { precio: 310000, sku: "CEN-005", nombre: "Centro de Mesa Cónico Degradé" },
+  "centro-mesa-ovalado-hojas": { precio: 320000, sku: "CEN-006", nombre: "Centro de Mesa Oval Hojas" },
+  "centro-mesa-conico-hojas": { precio: 320000, sku: "CEN-007", nombre: "Centro de Mesa Cónico Hojas" },
+  "centro-mesa-cuadrado-mosaico": { precio: 310000, sku: "CEN-008", nombre: "Centro de Mesa Cuadrado Mosaico" },
+  "centro-mesa-ovalado-liso": { precio: 300000, sku: "CEN-009", nombre: "Centro de Mesa Oval" },
+  "centro-mesa-conico-franjas": { precio: 320000, sku: "CEN-010", nombre: "Centro de Mesa Cónico Vetas" },
+  "florero-triptico": { precio: 184000, sku: "FLO-001", nombre: "Florero Tríptico" },
+  "florero-alto-irregular": { precio: 300000, sku: "FLO-002", nombre: "Florero Alto Irregular" },
+  "florero-irregular-boca-ancha": { precio: 310000, sku: "FLO-003", nombre: "Florero Ondas" },
+  "florero-diptico": { precio: 58000, sku: "FLO-004", nombre: "Díptico" },
+  "mini-florero": { precio: 58000, sku: "FLO-005", nombre: "Mini Florero" },
+  "vaso-florero": { precio: 105000, sku: "FLO-006", nombre: "Vaso Florero" },
+  "solitario-circular": { precio: 90000, sku: "SOL-001", nombre: "Solitario Circular" },
+  "solitario-guitarra": { precio: 90000, sku: "SOL-002", nombre: "Solitario Guitarra" },
+  "solitario-teja": { precio: 90000, sku: "SOL-003", nombre: "Solitario Teja" },
+  "porta-plantas-individual": { precio: 98000, sku: "PPN-001", nombre: "Porta Plantas Individual" },
+  "porta-plantas-doble": { precio: 190000, sku: "PPN-002", nombre: "Porta Plantas Doble" },
+  "porta-plantas-triple": { precio: 270000, sku: "PPN-003", nombre: "Porta Plantas Triple" },
   "porta-matera": { precio: 250000, sku: "PPN-004", nombre: "Porta Matera Versátil" },
   "porta-pasabocas-doble": { precio: 160000, sku: "PED-001", nombre: "Porta Pasabocas Doble" },
-  "plato-postre": { precio: 31000, sku: "VAJ-001", nombre: "Plato Postre" },
-  "plato-ensalada": { precio: 41000, sku: "VAJ-002", nombre: "Plato Ensalada" },
-  "plato-cena": { precio: 51000, sku: "VAJ-003", nombre: "Plato Principal" },
+  "plato-postre": { precio: 38000, sku: "VAJ-001", nombre: "Plato Postre" },
+  "plato-ensalada": { precio: 48000, sku: "VAJ-002", nombre: "Plato Ensalada" },
+  "plato-cena": { precio: 58000, sku: "VAJ-003", nombre: "Plato Principal" },
   "pedestal-repostero": { precio: 230000, sku: "PED-002", nombre: "Pedestal Repostero" },
   "portavasos-cuadrados": { precio: 20000, sku: "PVS-001", nombre: "Porta Vasos Vetas" },
-  "centro-mesa-conico": { precio: 280000, sku: "CEN-011", nombre: "Centro de Mesa Cónico" },
-  "bandeja-vetas": { precio: 280000, sku: "BAN-005", nombre: "Bandeja Vetas" }
+  "centro-mesa-conico": { precio: 300000, sku: "CEN-011", nombre: "Centro de Mesa Cónico" },
+  "centro-mesa-marea": { precio: 360000, sku: "CEN-012", nombre: "Centro de Mesa Marea" },
+  "centro-mesa-folia": { precio: 350000, sku: "CEN-013", nombre: "Centro de Mesa Folia" },
+  "bandeja-vetas": { precio: 290000, sku: "BAN-005", nombre: "Bandeja Vetas" },
+  "bandeja-folia-hoja": { precio: 340000, sku: "CEN-017", nombre: "Folia" }
 };
 
 // Reglas de envio — copia EXACTA de calcShipping() en customer-info.html
