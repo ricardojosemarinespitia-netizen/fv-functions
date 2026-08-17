@@ -3,7 +3,7 @@
 // ------------------------------------------------------------
 //  GENERADO AUTOMATICAMENTE desde sitio-felipe-vergel/products.js
 //  con: node generar-catalogo.mjs
-//  Fecha de generacion: 2026-08-11
+//  Fecha de generacion: 2026-08-17
 //  Piezas: 42
 //
 //  Por que existe: el navegador manda el carrito, y el navegador es
@@ -54,7 +54,7 @@ export const CATALOGO = {
   "plato-ensalada": { precio: 48000, sku: "VAJ-002", nombre: "Plato Ensalada" },
   "plato-cena": { precio: 58000, sku: "VAJ-003", nombre: "Plato Principal" },
   "pedestal-repostero": { precio: 230000, sku: "PED-002", nombre: "Pedestal Repostero" },
-  "portavasos-cuadrados": { precio: 20000, sku: "PVS-001", nombre: "Porta Vasos Vetas" },
+  "portavasos-cuadrados": { precio: 25000, sku: "PVS-001", nombre: "Porta Vasos Vetas" },
   "centro-mesa-conico": { precio: 300000, sku: "CEN-011", nombre: "Centro de Mesa Cónico" },
   "centro-mesa-marea": { precio: 360000, sku: "CEN-012", nombre: "Centro de Mesa Marea" },
   "centro-mesa-folia": { precio: 350000, sku: "CEN-013", nombre: "Centro de Mesa Folia" },
