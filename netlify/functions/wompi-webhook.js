@@ -189,6 +189,31 @@ export default async (req) => {
     return new Response("Ya estaba procesado", { status: 200 });
   }
 
+  // El registro llega en DOS escrituras separadas: wompi-sign pone el precio
+  // primero (server-a-server, siempre a tiempo) y el navegador del cliente
+  // llama despues con fullName/email/phone/cart. Ese `if (!pedido)` de arriba
+  // ya queda satisfecho con SOLO la primera escritura, asi que si la segunda
+  // se demora, el webhook seguia de largo con el pedido incompleto: registraba
+  // en Google Forms y mandaba los correos con nombre/correo/piezas en blanco.
+  // Caso real: FV-1788187888658-JG258 (31-ago-2026), pago aprobado y sin
+  // registrar — la causa de fondo era la llamada fire-and-forget en
+  // checkout.html (corregida por separado con keepalive+reintento), pero
+  // esta espera es la red de seguridad para cuando aun asi llegue tarde.
+  const completo = (p) => !!(p && p.fullName && p.email && Array.isArray(p.cart) && p.cart.length);
+  for (let i = 0; !completo(pedido) && i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    pedido = await store.get(ref, { type: "json", consistency: "strong" }).catch(() => pedido);
+  }
+  if (!completo(pedido)) {
+    console.error(
+      "wompi-webhook: RECHAZADO, el pedido", ref, "sigue incompleto tras esperar",
+      "(fullName:", !!pedido.fullName, "email:", !!pedido.email,
+      "cart:", Array.isArray(pedido.cart) ? pedido.cart.length : pedido.cart, ")",
+      "No se registra ni se envian correos con datos en blanco."
+    );
+    return new Response("Pedido incompleto: falta identidad del cliente", { status: 409 });
+  }
+
   // 4.5) El pedido tiene que haber pasado por wompi-sign (recalculo del monto
   //      contra el catalogo del servidor). Sin esto, alguien con el secreto de
   //      integridad de Wompi (aunque ya no viaje en el cliente, pudo copiarse
