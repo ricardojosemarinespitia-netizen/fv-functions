@@ -17,6 +17,7 @@
 // ============================================================
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
+import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 
 // --- Configuración pública (igual que en checkout.html) ---
 const EMAILJS_SERVICE_ID  = "service_bnw4s0x";
@@ -255,6 +256,16 @@ export default async (req) => {
     await fetch(`https://docs.google.com/forms/d/e/${FORM_ID}/formResponse`, { method: "POST", body: fd });
   } catch (e) {
     console.error("Google Forms:", e);
+  }
+
+  // 6.5) Registrar tambien en Supabase (ADICIONAL — Google Forms sigue arriba
+  //      y no se toca). Si falta la variable de entorno o Supabase no responde,
+  //      esto no hace nada y el flujo sigue: el pedido YA quedo en Google y los
+  //      correos se mandan igual abajo.
+  try {
+    await registrarEnSupabase(ref, pedido, tx);
+  } catch (e) {
+    console.error("Supabase (no bloqueante):", e);
   }
 
   // 7) Correos (Felipe + cliente)
