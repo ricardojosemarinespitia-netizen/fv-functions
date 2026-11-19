@@ -1,69 +1,61 @@
 // ============================================================
-//  catalogo-precios  ·  FUENTE DE VERDAD DE PRECIOS (servidor)
+//  catalogo-precios  ·  REGLAS DE PRECIO DEL SERVIDOR (a mano)
 // ------------------------------------------------------------
-//  GENERADO AUTOMATICAMENTE desde sitio-felipe-vergel/products.js
-//  con: node generar-catalogo.mjs
-//  Fecha de generacion: 2026-08-17
-//  Piezas: 42
+//  Los precios de LISTA vienen de lib/catalogo-datos.js, que se
+//  regenera con `node generar-catalogo.mjs` desde products.js.
+//  Este archivo NO se regenera: aqui viven las reglas (Black Friday,
+//  envio, codigo del Club) para que regenerar el catalogo no las borre.
 //
 //  Por que existe: el navegador manda el carrito, y el navegador es
 //  territorio enemigo. El precio que llega en el body de la peticion
 //  es una AFIRMACION del cliente, no un dato. El servidor firma la
-//  transaccion de Wompi sobre el precio de ESTE archivo, nunca sobre
-//  el que llego del navegador.
-//
-//  MANTENIMIENTO: cada vez que cambies un precio en products.js hay que
-//  regenerar este archivo, o el checkout mostrara un total y cobrara otro.
-//  El id de cada pieza (la clave) es el mismo p.id de products.js.
+//  transaccion de Wompi sobre el precio calculado AQUI.
 // ============================================================
+import { CATALOGO } from "./catalogo-datos.js";
 
-export const CATALOGO = {
-  "lampara-caribe-brisa": { precio: 299000, sku: "LAM-002", nombre: "Lámpara Caribe Brisa" },
-  "lampara-caribe-coral": { precio: 160000, sku: "LAM-003", nombre: "Lámpara Caribe Coral" },
-  "lampara-caribe-marea": { precio: 299000, sku: "LAM-004", nombre: "Lámpara Caribe Marea" },
-  "aplique-caribe-marea": { precio: 289000, sku: "LAM-005", nombre: "Aplique Caribe Marea" },
-  "bandeja-maxi-rect-ondas": { precio: 340000, sku: "BAN-001", nombre: "Maxi Bandeja Trama" },
-  "bandeja-hoja-maxi-irregular": { precio: 310000, sku: "CEN-014", nombre: "Hoja Orgánica Midi" },
-  "bandeja-hoja-midi-relieve": { precio: 290000, sku: "CEN-015", nombre: "Hoja Orgánica" },
-  "bandeja-hoja-jaspeada-xl": { precio: 340000, sku: "CEN-016", nombre: "Hoja Orgánica Maxi" },
-  "centro-mesa-redondo-mosaico": { precio: 210000, sku: "CEN-001", nombre: "Centro de Mesa Mosaico" },
-  "centro-mesa-ovalado-franjas": { precio: 320000, sku: "CEN-002", nombre: "Centro de Mesa Oval Vetas" },
-  "centro-mesa-ovalado-mosaico": { precio: 330000, sku: "CEN-003", nombre: "Centro de Mesa Oval Mosaico" },
-  "centro-mesa-conico-mosaico": { precio: 320000, sku: "CEN-004", nombre: "Centro de Mesa Cónico Mosaico" },
-  "centro-mesa-conico-degrade": { precio: 310000, sku: "CEN-005", nombre: "Centro de Mesa Cónico Degradé" },
-  "centro-mesa-ovalado-hojas": { precio: 320000, sku: "CEN-006", nombre: "Centro de Mesa Oval Hojas" },
-  "centro-mesa-conico-hojas": { precio: 320000, sku: "CEN-007", nombre: "Centro de Mesa Cónico Hojas" },
-  "centro-mesa-cuadrado-mosaico": { precio: 310000, sku: "CEN-008", nombre: "Centro de Mesa Cuadrado Mosaico" },
-  "centro-mesa-ovalado-liso": { precio: 300000, sku: "CEN-009", nombre: "Centro de Mesa Oval" },
-  "centro-mesa-conico-franjas": { precio: 320000, sku: "CEN-010", nombre: "Centro de Mesa Cónico Vetas" },
-  "florero-triptico": { precio: 184000, sku: "FLO-001", nombre: "Florero Tríptico" },
-  "florero-alto-irregular": { precio: 300000, sku: "FLO-002", nombre: "Florero Alto Irregular" },
-  "florero-irregular-boca-ancha": { precio: 310000, sku: "FLO-003", nombre: "Florero Ondas" },
-  "florero-diptico": { precio: 58000, sku: "FLO-004", nombre: "Díptico" },
-  "mini-florero": { precio: 58000, sku: "FLO-005", nombre: "Mini Florero" },
-  "vaso-florero": { precio: 105000, sku: "FLO-006", nombre: "Vaso Florero" },
-  "solitario-circular": { precio: 90000, sku: "SOL-001", nombre: "Solitario Circular" },
-  "solitario-guitarra": { precio: 90000, sku: "SOL-002", nombre: "Solitario Guitarra" },
-  "solitario-teja": { precio: 90000, sku: "SOL-003", nombre: "Solitario Teja" },
-  "porta-plantas-individual": { precio: 98000, sku: "PPN-001", nombre: "Porta Plantas Individual" },
-  "porta-plantas-doble": { precio: 190000, sku: "PPN-002", nombre: "Porta Plantas Doble" },
-  "porta-plantas-triple": { precio: 270000, sku: "PPN-003", nombre: "Porta Plantas Triple" },
-  "porta-matera": { precio: 250000, sku: "PPN-004", nombre: "Porta Matera Versátil" },
-  "porta-pasabocas-doble": { precio: 160000, sku: "PED-001", nombre: "Porta Pasabocas Doble" },
-  "plato-postre": { precio: 38000, sku: "VAJ-001", nombre: "Plato Postre" },
-  "plato-ensalada": { precio: 48000, sku: "VAJ-002", nombre: "Plato Ensalada" },
-  "plato-cena": { precio: 58000, sku: "VAJ-003", nombre: "Plato Principal" },
-  "pedestal-repostero": { precio: 230000, sku: "PED-002", nombre: "Pedestal Repostero" },
-  "portavasos-cuadrados": { precio: 25000, sku: "PVS-001", nombre: "Porta Vasos Vetas" },
-  "centro-mesa-conico": { precio: 300000, sku: "CEN-011", nombre: "Centro de Mesa Cónico" },
-  "centro-mesa-marea": { precio: 360000, sku: "CEN-012", nombre: "Centro de Mesa Marea" },
-  "centro-mesa-folia": { precio: 350000, sku: "CEN-013", nombre: "Centro de Mesa Folia" },
-  "bandeja-vetas": { precio: 290000, sku: "BAN-005", nombre: "Bandeja Vetas" },
-  "bandeja-folia-hoja": { precio: 340000, sku: "CEN-017", nombre: "Folia" }
-};
+export { CATALOGO };
 
-// Reglas de envio — copia EXACTA de calcShipping() en customer-info.html
-// y checkout.html. Si cambian alli, cambian aqui.
+// ── BLACK FRIDAY ────────────────────────────────────────────
+//  Espejo EXACTO de window.FV_BF / fvPrecioFinal() en products.js.
+//  Si cambias el % aqui, cambialo alli (y al reves). Las pruebas
+//  (pruebas/precios.test.mjs) fallan si no coinciden.
+//
+//  Variables de entorno en Netlify (opcionales):
+//    BLACK_FRIDAY_ACTIVO = "1" | "0"    sin definir -> BF_ACTIVO_POR_DEFECTO
+//    BLACK_FRIDAY_HASTA  = ISO 8601     sin definir -> BF_HASTA (null = sin fin)
+//  El % NO va por variable a proposito: tiene que ser el mismo numero
+//  que products.js, y una variable olvidada en Netlify lo romperia.
+export const PCT_BLACK_FRIDAY = 15;
+export const BF_ACTIVO_POR_DEFECTO = true;
+export const BF_HASTA = null;            // no se inventa fecha de fin
+export const BF_ACUMULA_CODIGO = false;  // FV15 no se suma durante la campana (PENDIENTE Ricardo)
+
+const SI = ["1", "true", "si", "sí", "on", "yes"];
+
+export function configBlackFriday(env = (typeof process !== "undefined" ? process.env : {}), ahora = Date.now()) {
+  const v = String(env.BLACK_FRIDAY_ACTIVO == null ? "" : env.BLACK_FRIDAY_ACTIVO).trim().toLowerCase();
+  let activo = v === "" ? BF_ACTIVO_POR_DEFECTO : SI.includes(v);
+  const hasta = env.BLACK_FRIDAY_HASTA || BF_HASTA;
+  if (activo && hasta) {
+    const t = Date.parse(hasta);
+    if (!Number.isNaN(t) && ahora >= t) activo = false;
+  }
+  return { activo, pct: activo ? PCT_BLACK_FRIDAY : 0, acumulaCodigo: BF_ACUMULA_CODIGO, hasta: hasta || null };
+}
+
+// Precio final de UNA unidad. Misma formula que products.js:
+//   final = Math.round(lista * (100 - pct) / 1000) * 10
+// -> COP entero, multiplo de 10. Con precios multiplos de $1.000 y pct 15
+//    es exacto (lista x 0,85).
+export function precioFinal(lista, pct) {
+  lista = Math.round(Number(lista) || 0);
+  if (!(pct > 0) || lista <= 0) return lista;
+  return Math.round(lista * (100 - pct) / 1000) * 10;
+}
+
+// Reglas de envio — copia EXACTA de calcShipping() en customer-info.html,
+// checkout.html y fvEnvio() de products.js. Se aplica sobre el subtotal YA
+// con descuentos.
 export function calcularEnvio(subtotal, metodo) {
   if (metodo === "bucaramanga") return 0;
   if (subtotal <= 180000) return Math.round(subtotal * 0.25);
@@ -79,12 +71,22 @@ export const PCT_DESCUENTO = 0.15;
  * Recalcula el total del pedido SOLO con datos del servidor.
  * @param {Array<{id:string, qty:number}>} items  ids y cantidades que manda el navegador
  * @param {string} metodoEntrega  "bucaramanga" | "domicilio"
- * @param {boolean} descuentoValido  true si el codigo se verifico contra el Club
- * @returns {{subtotal:number, descuento:number, envio:number, total:number, lineas:Array, desconocidos:Array}}
+ * @param {boolean} descuentoValido  true si el codigo del Club se verifico (y puede aplicarse)
+ * @param {{activo:boolean,pct:number,acumulaCodigo:boolean}} [bf]  config de Black Friday
+ * @returns {{subtotalLista:number, descuentoBF:number, subtotal:number, descuento:number,
+ *            envio:number, total:number, lineas:Array, desconocidos:Array, blackFriday:object}}
+ *
+ *  subtotal      = suma(precio FINAL x qty)   (ya con Black Friday)
+ *  descuento     = codigo del Club sobre ese subtotal (0 si BF no acumula)
+ *  envio         = sobre (subtotal - descuento)
+ *  total         = subtotal - descuento + envio
+ *  subtotalLista / descuentoBF son informativos (subtotalLista - descuentoBF = subtotal).
  */
-export function recalcularTotal(items, metodoEntrega, descuentoValido) {
+export function recalcularTotal(items, metodoEntrega, descuentoValido, bf = configBlackFriday()) {
+  const pct = bf && bf.activo ? bf.pct : 0;
   const lineas = [];
   const desconocidos = [];
+  let subtotalLista = 0;
   let subtotal = 0;
 
   for (const it of Array.isArray(items) ? items : []) {
@@ -95,14 +97,28 @@ export function recalcularTotal(items, metodoEntrega, descuentoValido) {
     let qty = Math.floor(Number(it.qty));
     if (!Number.isFinite(qty) || qty < 1) qty = 1;
     if (qty > 20) qty = 20;
-    subtotal += pieza.precio * qty;
-    lineas.push({ id, qty, precio: pieza.precio, sku: pieza.sku, nombre: pieza.nombre });
+    const final = precioFinal(pieza.precio, pct);
+    subtotalLista += pieza.precio * qty;
+    subtotal += final * qty;
+    // "precio" = lo que se cobra por unidad (save-pending lo pone en cart[].price).
+    lineas.push({ id, qty, precio: final, precioLista: pieza.precio, sku: pieza.sku, nombre: pieza.nombre });
   }
 
-  const descuento = descuentoValido ? Math.round(subtotal * PCT_DESCUENTO) : 0;
+  const codigoAplica = !!descuentoValido && !(pct > 0 && bf && bf.acumulaCodigo === false);
+  const descuento = codigoAplica ? Math.round(subtotal * PCT_DESCUENTO) : 0;
   const subtotalConDescuento = subtotal - descuento;
   const envio = calcularEnvio(subtotalConDescuento, metodoEntrega === "bucaramanga" ? "bucaramanga" : "domicilio");
   const total = subtotalConDescuento + envio;
 
-  return { subtotal, descuento, envio, total, lineas, desconocidos };
+  return {
+    subtotalLista,
+    descuentoBF: subtotalLista - subtotal,
+    subtotal,
+    descuento,
+    envio,
+    total,
+    lineas,
+    desconocidos,
+    blackFriday: { activo: pct > 0, pct, acumulaCodigo: bf ? bf.acumulaCodigo : true }
+  };
 }

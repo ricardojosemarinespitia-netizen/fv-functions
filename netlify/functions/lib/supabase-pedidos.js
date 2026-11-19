@@ -103,7 +103,11 @@ export async function registrarEnSupabase(ref, pedido, tx) {
 
     // 2) insert del pedido (ignora si la referencia ya existe — idempotencia)
     const subtotal = Number(pedido.subtotal) || 0;
-    const descuento = Number(pedido.discount) || 0;
+    // Antes leia pedido.discount, campo que ningun flujo escribe (el pedido trae
+    // discountAmount): el descuento del Club quedaba SIEMPRE en 0 en Supabase.
+    // Con Black Friday, "subtotal" ya viene con precios finales; el ahorro de la
+    // campana (descuentoBF/subtotalLista/bfPct) queda en payload_raw.
+    const descuento = Number(pedido.discountAmount != null ? pedido.discountAmount : pedido.discount) || 0;
     const envio = Number(pedido.shipping) || 0;
     const total = Number(pedido.total) || 0;
 

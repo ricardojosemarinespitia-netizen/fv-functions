@@ -27,7 +27,8 @@ import { getStore } from "@netlify/blobs";
 // OJO: "cart" NO se congela — el navegador es quien tiene el nombre, el color
 // y la foto de cada pieza, y los correos los usan. Lo que sí se hace es
 // corregir el precio de cada línea contra _serverLineas (ver abajo).
-const CAMPOS_DE_DINERO = ["subtotal", "discountAmount", "shipping", "total", "discountCode"];
+// Black Friday: subtotalLista/descuentoBF/bfPct tambien los fija wompi-sign.
+const CAMPOS_DE_DINERO = ["subtotal", "discountAmount", "shipping", "total", "discountCode", "subtotalLista", "descuentoBF", "bfPct"];
 
 // La referencia la genera checkout.html como FV-<epoch>-<alfanumérico>.
 // Rechazar cualquier otra forma evita que alguien llene el almacén de blobs
@@ -133,7 +134,8 @@ export default async (req) => {
       const porId = new Map(lineas.map((l) => [String(l.id), l]));
       entrante.cart = entrante.cart.map((i) => {
         const l = porId.get(String(i && i.id));
-        return l ? { ...i, price: l.precio, qty: l.qty, sku: l.sku || i.sku } : i;
+        // l.precio = precio FINAL cobrado (con Black Friday); l.precioLista = lista.
+        return l ? { ...i, price: l.precio, precioLista: l.precioLista != null ? l.precioLista : l.precio, qty: l.qty, sku: l.sku || i.sku } : i;
       });
     }
   }

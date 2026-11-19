@@ -22,7 +22,7 @@
 // ============================================================
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { recalcularTotal, RE_CODIGO } from "./lib/catalogo-precios.js";
+import { recalcularTotal, RE_CODIGO, configBlackFriday } from "./lib/catalogo-precios.js";
 
 // Origenes autorizados a pedir una firma. No es la barrera de seguridad
 // (esa es el recalculo del monto), pero evita que la funcion se use desde
@@ -135,16 +135,24 @@ export default async (req) => {
   // sitio y se aplica el 15%: preferimos cobrar de menos a cobrarle al cliente
   // un total distinto del que vio en pantalla.
   const codigo = String((body.discountCode || "")).trim().toUpperCase();
+  // Black Friday: mismo interruptor/porcentaje que products.js. Si la campana
+  // no acumula el codigo del Club, ni se consulta al Club (ahorra 2,5 s con la
+  // ventana de Wompi en blanco) ni se aplica ni se marca como usado.
+  const bf = configBlackFriday();
+  const bfSinCodigo = bf.activo && !bf.acumulaCodigo;
   let descuentoValido = false;
   let veredicto = "sin-codigo";
-  if (codigo && RE_CODIGO.test(codigo)) {
+  if (codigo && bfSinCodigo) {
+    veredicto = "no-acumulable-black-friday";
+  } else if (codigo && RE_CODIGO.test(codigo)) {
     veredicto = await verificarCodigo(codigo);
     descuentoValido = veredicto !== "invalido";
   } else if (codigo) {
     veredicto = "formato-invalido";
   }
 
-  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido);
+  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido, bf);
+  const codigoAplicado = r.descuento > 0 ? codigo : null;
 
   if (!r.lineas.length) {
     return new Response(JSON.stringify({ ok: false, error: "sin-piezas-validas", desconocidos: r.desconocidos }), { status: 400, headers: H });
@@ -174,11 +182,16 @@ export default async (req) => {
     await store.setJSON(ref, {
       ...(previo || {}),
       ref,
+      // subtotal = precios FINALES (con Black Friday si esta activo).
       subtotal: r.subtotal,
       discountAmount: r.descuento,
-      discountCode: descuentoValido ? codigo : null,
+      discountCode: codigoAplicado,
       shipping: r.envio,
       total: r.total,
+      // Black Friday (informativo): subtotalLista - descuentoBF = subtotal.
+      subtotalLista: r.subtotalLista,
+      descuentoBF: r.descuentoBF,
+      bfPct: r.blackFriday.pct,
       // Precios del catalogo, por id: save-pending corrige con esto el precio
       // de cada linea del carrito que mande el navegador.
       _serverLineas: r.lineas,
@@ -202,9 +215,12 @@ export default async (req) => {
       descuento: r.descuento,
       envio: r.envio,
       total: r.total,
-      codigo: descuentoValido ? codigo : "",
+      codigo: codigoAplicado || "",
       veredictoCodigo: veredicto,
-      desconocidos: r.desconocidos
+      desconocidos: r.desconocidos,
+      subtotalLista: r.subtotalLista,
+      descuentoBF: r.descuentoBF,
+      blackFriday: r.blackFriday
     }
   }), { status: 200, headers: H });
 };

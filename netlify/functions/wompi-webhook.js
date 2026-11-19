@@ -276,6 +276,11 @@ export default async (req) => {
     `<strong style="color:#FAF4ED;">Correo:</strong> ${pedido.email}<br>` +
     `<strong style="color:#FAF4ED;">Teléfono:</strong> ${pedido.phone}<br>` +
     `<strong style="color:#FAF4ED;">Total:</strong> ${fmt(pedido.total)}<br>` +
+    // Black Friday: lo fija wompi-sign (no el navegador). Informativo: el total
+    // y el precio de cada pieza ya vienen con el descuento aplicado.
+    (Number(pedido.descuentoBF) > 0
+      ? `<strong style="color:#FAF4ED;">Black Friday ${pedido.bfPct || ""} %:</strong> precio de lista ${fmt(pedido.subtotalLista)} · ahorro ${fmt(pedido.descuentoBF)}<br>`
+      : "") +
     `<strong style="color:#FAF4ED;">Entrega:</strong> ${entrega}<br>` +
     `<strong style="color:#FAF4ED;">Piezas:</strong><br>${lineas.replace(/\n/g, "<br>")}</p>`;
 
