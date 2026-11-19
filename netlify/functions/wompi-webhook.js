@@ -6,53 +6,33 @@
 //    1. Valida la firma del evento (WOMPI_EVENTS_SECRET)
 //    2. Recupera el pedido guardado por save-pending (por referencia)
 //    3. Lo registra en Google Forms (la "base de datos")
-//    4. Envía los correos a Felipe y al cliente vía EmailJS
+//    4. Envía los correos a Felipe y al cliente vía Resend (lib/correos.js,
+//       el mismo módulo que usa la función enviar-correo)
 //
 //  Así el pedido se registra AUNQUE el cliente cierre la ventana
 //  de Wompi sin dar "Volver al comercio".
 //
 //  Variables de entorno requeridas en Netlify:
 //    WOMPI_EVENTS_SECRET   -> Secreto de eventos (Wompi > Desarrolladores)
-//    EMAILJS_PRIVATE_KEY   -> Private Key de EmailJS (Account > General)
+//    RESEND_API_KEY        -> Clave de Resend
+//    RESEND_FROM           -> "Felipe Vergel <pedidos@felipevergel.com>"
+//    EMAIL_FELIPE          -> buzón donde Felipe recibe los avisos
+//  (El correo lleva la línea de Black Friday: lib/correos.js la arma con
+//   subtotalLista/descuentoBF/bfPct que fija wompi-sign.)
 // ============================================================
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
+import { enviarCorreos, limpiarPedido } from "./lib/correos.js";
 
-// --- Configuración pública (igual que en checkout.html) ---
-const EMAILJS_SERVICE_ID  = "service_bnw4s0x";
-const EMAILJS_TPL_FELIPE   = "template_80c4173";  // notificación de pedido para Felipe
-const EMAILJS_TPL_CLIENTE  = "template_20wj574";  // confirmación para el cliente
-const EMAILJS_PUBLIC_KEY   = "XVjxIagv23vBCkzTX";
-const EMAIL_FELIPE         = "felipevergelarteenvidrio@gmail.com";
-const FORM_ID              = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
+// --- Configuración pública ---
+const FORM_ID             = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
 const VENTAS_API           = "https://script.google.com/macros/s/AKfycbznN-5jCwKFFvSeKEiFuvaqwCW2DLv7OpQm6jCmEgH8w2qHIZtTfCPNsi3saPAv7j3s/exec";
 // Clave que el Apps Script exige desde el 27-jul-2026 para ESCRIBIR
 // (markUsed). Mismo secreto que usa checkout.html del sitio principal.
 const VENTAS_KEY           = "Pjh5zFh5RhYW";
 
 const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-CO");
-const sepNum = (n) => (Number(n) || 0).toLocaleString("es-CO");
-
-// Envía un correo usando la API REST de EmailJS (servidor, no navegador).
-// Requiere que en EmailJS esté activado "Allow EmailJS API for non-browser
-// applications" y la EMAILJS_PRIVATE_KEY como variable de entorno.
-async function sendEmail(template_id, template_params) {
-  const r = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      service_id: EMAILJS_SERVICE_ID,
-      template_id,
-      user_id: EMAILJS_PUBLIC_KEY,
-      accessToken: process.env.EMAILJS_PRIVATE_KEY,
-      template_params
-    })
-  });
-  if (!r.ok) {
-    throw new Error(`EmailJS ${r.status}: ${await r.text()}`);
-  }
-}
 
 // ── Respaldo de verificación · SOLO si falta WOMPI_EVENTS_SECRET ──────────
 //  Por que existe: antes el webhook fallaba ABIERTO (`if (secret && sig && …)`).
@@ -238,7 +218,6 @@ export default async (req) => {
     .map((i) => `${i.qty}x ${i.sku ? `[${i.sku}] ` : ""}${i.name} (${i.color}) - ${fmt(i.price * i.qty)}`)
     .join("\n");
   const entrega = `${pedido.address || ""}${pedido.city ? ", " + pedido.city : ""}`;
-  const fechaHoy = new Date().toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" });
 
   // 6) Registrar en Google Forms (misma estructura que guardarPedido)
   try {
@@ -269,52 +248,18 @@ export default async (req) => {
   }
 
   // 7) Correos (Felipe + cliente)
-  const mensajeHtml =
-    `<p style="font-family:-apple-system,sans-serif;font-size:14px;line-height:1.7;color:#d4e8e6;margin:0;">` +
-    `<strong style="color:#FAF4ED;">Referencia:</strong> ${ref}<br>` +
-    `<strong style="color:#FAF4ED;">Cliente:</strong> ${pedido.fullName}<br>` +
-    `<strong style="color:#FAF4ED;">Correo:</strong> ${pedido.email}<br>` +
-    `<strong style="color:#FAF4ED;">Teléfono:</strong> ${pedido.phone}<br>` +
-    `<strong style="color:#FAF4ED;">Total:</strong> ${fmt(pedido.total)}<br>` +
-    // Black Friday: lo fija wompi-sign (no el navegador). Informativo: el total
-    // y el precio de cada pieza ya vienen con el descuento aplicado.
-    (Number(pedido.descuentoBF) > 0
-      ? `<strong style="color:#FAF4ED;">Black Friday ${pedido.bfPct || ""} %:</strong> precio de lista ${fmt(pedido.subtotalLista)} · ahorro ${fmt(pedido.descuentoBF)}<br>`
-      : "") +
-    `<strong style="color:#FAF4ED;">Entrega:</strong> ${entrega}<br>` +
-    `<strong style="color:#FAF4ED;">Piezas:</strong><br>${lineas.replace(/\n/g, "<br>")}</p>`;
-
+  //    Las plantillas y el envío por Resend viven en lib/correos.js (los
+  //    datos del cliente se escapan allí). Cada correo es independiente y un
+  //    fallo NO rompe el flujo: el pedido ya quedó registrado arriba.
+  //    El Idempotency-Key "pedido-<ref>-<rol>" evita que el correo salga
+  //    dos veces si el navegador ya lo envió con enviar-correo.
   try {
-    await sendEmail(EMAILJS_TPL_FELIPE, {
-      nombre: pedido.fullName,
-      to_email: EMAIL_FELIPE,
-      asunto: `Nuevo pedido (pago confirmado) · ${ref} · ${fmt(pedido.total)}`,
-      mensaje: mensajeHtml,
-      email_cliente: pedido.email,
-      telefono: pedido.phone,
-      fecha: fechaHoy,
-      referencia: ref,
-      productos: lineas,
-      codigo_descuento: pedido.discountCode || "",
-      direccion: entrega,
-      total: sepNum(pedido.total)
-    });
+    const datosCorreo = limpiarPedido({ ...pedido, ref });
+    const r = await enviarCorreos("pedido", datosCorreo, { pagoConfirmado: true });
+    if (!r.felipe.ok) console.error("Correo Felipe:", r.felipe.error);
+    if (!r.cliente.ok) console.error("Correo cliente:", r.cliente.error);
   } catch (e) {
-    console.error("Correo Felipe:", e);
-  }
-
-  try {
-    await sendEmail(EMAILJS_TPL_CLIENTE, {
-      nombre: pedido.fullName,
-      to_email: pedido.email,
-      asunto: `Tu pedido está confirmado · ${ref}`,
-      mensaje: mensajeHtml,
-      referencia: ref,
-      productos: lineas,
-      total: sepNum(pedido.total)
-    });
-  } catch (e) {
-    console.error("Correo cliente:", e);
+    console.error("Correos (no bloqueante):", e);
   }
 
   // 8) Marcar código de descuento como usado (si aplica)

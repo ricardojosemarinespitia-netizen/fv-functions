@@ -8,6 +8,7 @@
     "@netlify/blobs": "^8.1.0"
   },
   "scripts": {
-    "catalogo": "node generar-catalogo.mjs"
+    "catalogo": "node generar-catalogo.mjs",
+    "test": "node test/correos.test.mjs && node test/adaptador.test.mjs"
   }
 }

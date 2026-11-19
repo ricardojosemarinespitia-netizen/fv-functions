@@ -22,7 +22,16 @@ Netlify > Site configuration > Environment variables.
 |---|---|---|
 | `WOMPI_INTEGRITY` | `wompi-sign` | Devuelve **503** y el checkout cae al respaldo antiguo (secreto en el navegador) |
 | `WOMPI_EVENTS_SECRET` | `wompi-webhook` | Devuelve **503** y **no se registra ningun pedido por webhook** (falla cerrado, a proposito) |
-| `EMAILJS_PRIVATE_KEY` | `wompi-webhook` | Los correos automaticos del webhook fallan |
+| `RESEND_API_KEY` | `enviar-correo`, `wompi-webhook` | `enviar-correo` devuelve **503**; los correos del webhook fallan (el pedido igual se registra) |
+| `RESEND_FROM` | `enviar-correo`, `wompi-webhook` | Se usa `Felipe Vergel <pedidos@felipevergel.com>` (aviso en el log); el dominio debe estar verificado en Resend |
+| `EMAIL_FELIPE` | `enviar-correo`, `wompi-webhook` | Se usa `felipevergelarteenvidrio@gmail.com` (aviso en el log) |
+| `BLACK_FRIDAY_ACTIVO` | `wompi-sign`, `enviar-correo` | Sin definir = campaña **activa**. `false` / `0` la apaga |
+| `BLACK_FRIDAY_HASTA` | `wompi-sign`, `enviar-correo` | Sin fecha de fin |
+| `RESEND_DRY_RUN` | solo pruebas | `1` = arma los correos y los devuelve sin enviarlos. **No dejarlo puesto en producción** |
+
+Los correos ya no usan EmailJS: `enviar-correo` (el sitio llama desde el navegador con
+`{tipo, datos}`) y `wompi-webhook` comparten `lib/correos.js` (plantillas + API de Resend).
+Pruebas sin red: `npm test` y `node pruebas/precios.test.mjs <products.js> <carpeta del sitio>`.
 
 `WOMPI_INTEGRITY` es el **secreto de integridad** (empieza por `prod_integrity_`), no la
 llave publica `pub_prod_...`. Wompi > Comercio > Desarrolladores.
