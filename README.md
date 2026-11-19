@@ -26,7 +26,9 @@ Netlify > Site configuration > Environment variables.
 | `RESEND_FROM` | `enviar-correo`, `wompi-webhook` | Se usa `Felipe Vergel <pedidos@felipevergel.com>` (aviso en el log); el dominio debe estar verificado en Resend |
 | `EMAIL_FELIPE` | `enviar-correo`, `wompi-webhook` | Se usa `felipevergelarteenvidrio@gmail.com` (aviso en el log) |
 | `BLACK_FRIDAY_ACTIVO` | `wompi-sign`, `enviar-correo` | Sin definir = campaña **activa**. `false` / `0` la apaga |
+| `BLACK_FRIDAY_DESDE` | `wompi-sign`, `enviar-correo` | Se usa `BF_DESDE` = `2026-11-27T01:00:00-05:00` (inicio automático) |
 | `BLACK_FRIDAY_HASTA` | `wompi-sign`, `enviar-correo` | Sin fecha de fin |
+| `VIP_HASTA` | `vip-codigo`, `wompi-sign` | Vacío = los códigos FV20 no vencen |
 | `RESEND_DRY_RUN` | solo pruebas | `1` = arma los correos y los devuelve sin enviarlos. **No dejarlo puesto en producción** |
 
 Los correos ya no usan EmailJS: `enviar-correo` (el sitio llama desde el navegador con
