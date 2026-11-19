@@ -21,7 +21,10 @@
 //
 //  Tipos de correo (lista cerrada):
 //    "pedido"  -> aviso a Felipe + confirmación al cliente
-//    "club"    -> bienvenida al Círculo (cliente) + aviso a Felipe
+//    "club"    -> bienvenida al Círculo (cliente) + aviso a Felipe (ya no lo usa el sitio)
+//    "vip"     -> código personal FV20 (cliente) + aviso a Felipe. SOLO lo
+//                 dispara la función vip-codigo (el código lo crea el servidor);
+//                 el navegador no puede pedirlo por enviar-correo.
 //
 //  Anti-relay: el navegador NUNCA elige destinatario ni contenido libre.
 //    - El aviso a Felipe va solo a EMAIL_FELIPE.
@@ -33,7 +36,7 @@
 //    - Sin enlaces en nombre, notas, dirección ni color; límites por IP,
 //      por destinatario y global.
 // ============================================================
-import { CATALOGO, recalcularTotal, configBlackFriday } from "./catalogo-precios.js";
+import { CATALOGO, recalcularTotal, configBlackFriday, RE_CODIGO_VIP } from "./catalogo-precios.js";
 
 export const ORIGENES_OK = ["https://felipevergel.com", "https://www.felipevergel.com"];
 
@@ -44,6 +47,7 @@ export const TIPOS = ["pedido", "club"];
 
 const RE_REF = /^FV-\d{10,16}-[A-Z0-9]{1,12}$/;
 const RE_CODIGO = /^FV15-[A-Z0-9]{7}$/;
+const RE_CODIGO_PEDIDO = /^FV(15|20)-[A-Z0-9]{7}$/;
 // Un solo buzón, sin espacios, comas, punto y coma ni saltos de línea.
 const RE_EMAIL = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 // Enlaces: nadie necesita una URL en su nombre, nota o dirección; un
@@ -181,7 +185,7 @@ export function validarPedido(datos) {
   const email = emailValido(datos.email, err);
 
   const codigo = textoOpcional(datos, "discountCode", 20, err);
-  if (codigo && !RE_CODIGO.test(codigo)) err.push("discountCode: formato inválido");
+  if (codigo && !RE_CODIGO_PEDIDO.test(codigo)) err.push("discountCode: formato inválido");
 
   const paymentMethod = textoOpcional(datos, "paymentMethod", 30, err) || "pse";
   if (!METODOS_PAGO.includes(paymentMethod)) err.push("paymentMethod: valor no permitido");
@@ -299,7 +303,7 @@ export function limpiarPedido(p) {
  * llega, por SKU. Una pieza desconocida rechaza la solicitud.
  * Si el total que vio el cliente difiere, se avisa a Felipe (avisoTotalNavegador).
  */
-export function recalcularPedido(p, env) {
+export function recalcularPedido(p, env, { vipValido = false } = {}) {
   const porSku = new Map(Object.entries(CATALOGO).map(([id, x]) => [String(x.sku).toUpperCase(), id]));
   const ids = [];
   for (const i of p.cart) {
@@ -308,7 +312,10 @@ export function recalcularPedido(p, env) {
     ids.push(id);
   }
   const bf = configBlackFriday(env);
-  const r = recalcularTotal(ids.map((id, k) => ({ id, qty: p.cart[k].qty })), p.deliveryMethod, !!p.discountCode, bf);
+  const esVip = RE_CODIGO_VIP.test(p.discountCode || "");
+  // FV15: formato válido = se aplica (igual que la pantalla; Felipe confirma
+  // por WhatsApp). FV20: solo si el almacén VIP lo dio por válido.
+  const r = recalcularTotal(ids.map((id, k) => ({ id, qty: p.cart[k].qty })), p.deliveryMethod, !esVip && !!p.discountCode, bf, { vip: esVip && vipValido });
   const cart = r.lineas.map((l, k) => ({
     id: l.id, qty: l.qty, sku: l.sku, name: l.nombre, color: p.cart[k].color, price: l.precio, precioLista: l.precioLista
   }));
@@ -515,10 +522,53 @@ function correoClubFelipe(c) {
   return { rol: "felipe", to: null, subject: asunto, html: envoltura({ asunto, nombre: "Felipe", saludo: false, cta: false, cuerpo }), text: texto, replyToCliente: c.email };
 }
 
+function correoVipCliente(c) {
+  const asunto = "Tu código personal del 20 %";
+  const cuerpo =
+    `<p style="font-family:${SANS};font-size:15px;line-height:1.8;color:${C.texto};margin:0 0 24px;">Este es tu código personal para comprar cualquier pieza de la tienda con 20&nbsp;% de descuento sobre el precio de lista:</p>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;"><tr><td align="center" style="border:2px dashed ${C.rosa};border-radius:16px;background:rgba(243,207,179,0.08);padding:20px 38px;">` +
+    `<div style="font-family:${SANS};font-size:10px;letter-spacing:3px;text-transform:uppercase;color:${C.terracota};font-weight:700;margin-bottom:8px;">Código personal &middot; 20&nbsp;%</div>` +
+    `<div style="font-family:${SANS};font-size:28px;letter-spacing:6px;font-weight:700;color:${C.crema};">${esc(c.codigo)}</div>` +
+    `<div style="font-family:${SANS};font-size:11px;color:${C.rosa};margin-top:8px;">Un solo uso &middot; Se gasta cuando tu pago es aprobado</div></td></tr></table>` +
+    `<p style="font-family:${SANS};font-size:13px;line-height:1.7;color:${C.suave};margin:0;">Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20&nbsp;% reemplaza el 15&nbsp;%.` +
+    (c.hasta ? ` Vale hasta el ${esc(c.hastaTexto || c.hasta)}.` : "") + `</p>`;
+  const texto =
+    `Hola ${c.nombre},
+
+Este es tu código personal del 20 % sobre el precio de lista: ${c.codigo}
+` +
+    `Un solo uso. Se gasta cuando tu pago es aprobado.
+Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20 % reemplaza el 15 %.
+` +
+    (c.hasta ? `Vale hasta el ${c.hastaTexto || c.hasta}.
+` : "") +
+    `
+Ver catálogo: ${SITIO}/#catalogo
+
+Felipe Vergel · Arte en Vidrio
+`;
+  return { rol: "cliente", to: c.email, subject: asunto, html: envoltura({ asunto, nombre: c.nombre, cuerpo }), text: texto };
+}
+
+function correoVipFelipe(c) {
+  const asunto = `Nuevo código VIP · ${c.nombre}`;
+  const cuerpo =
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">` +
+    filaDato("Nombre", esc(c.nombre)) + filaDato("Correo", esc(c.email)) + filaDato("Código", esc(c.codigo)) +
+    filaDato("Desde", c.origen === "circulo" ? "Ventana del Círculo" : "Enlace /vip") + `</table>`;
+  const texto = `Nuevo código VIP (${c.origen === "circulo" ? "Círculo" : "/vip"}).
+Nombre: ${c.nombre}
+Correo: ${c.email}
+Código: ${c.codigo}
+`;
+  return { rol: "felipe", to: null, subject: asunto, html: envoltura({ asunto, nombre: "Felipe", saludo: false, cta: false, cuerpo }), text: texto, replyToCliente: c.email };
+}
+
 /** Arma los correos de un tipo. Los datos ya deben venir validados/limpios. */
 export function construirCorreos(tipo, datos, opts = {}) {
   if (tipo === "pedido") return [correoPedidoFelipe(datos, opts), correoPedidoCliente(datos, opts)];
   if (tipo === "club") return [correoClubCliente(datos, opts), correoClubFelipe(datos)];
+  if (tipo === "vip") return [correoVipCliente(datos), correoVipFelipe(datos)];
   throw new Error("tipo desconocido: " + tipo);
 }
 
@@ -642,7 +692,9 @@ async function contar(clave, ventanaMs, store, ahora) {
 //  abuso entre muchas IP, igual se corta. Holgado para el tráfico real.
 export const LIMITES = {
   pedido: { ip: 12, destinatario: 4, global: 60, ventanaMs: 60 * 60 * 1000 },
-  club: { ip: 6, destinatario: 2, global: 150, ventanaMs: 60 * 60 * 1000 }
+  club: { ip: 6, destinatario: 2, global: 150, ventanaMs: 60 * 60 * 1000 },
+  vip: { ip: 8, destinatario: 3, global: 200, ventanaMs: 60 * 60 * 1000 },
+  vipVerificar: { ip: 40, destinatario: 40, global: 2000, ventanaMs: 60 * 60 * 1000 }
 };
 
 /** true = permitido. */
@@ -658,7 +710,7 @@ export async function dentroDelLimite(tipo, ip, email, { store, ahora = Date.now
 
 // ───────────────────── lógica HTTP (sin depender de Netlify) ─────────────────────
 
-function cabeceras(origen) {
+export function cabeceras(origen) {
   const h = {
     "Content-Type": "application/json",
     "Vary": "Origin",
@@ -722,7 +774,11 @@ export async function procesarSolicitud(req, deps = {}) {
     if (guardado && guardado._serverPriced && completo(guardado)) {
       datos = limpiarPedido({ ...guardado, ref: datos.ref });
     } else {
-      const rc = recalcularPedido(datos, env);
+      let vipValido = false;
+      if (RE_CODIGO_VIP.test(datos.discountCode || "") && deps.verificarVip) {
+        try { vipValido = (await deps.verificarVip(datos.discountCode)) === "valido"; } catch { vipValido = false; }
+      }
+      const rc = recalcularPedido(datos, env, { vipValido });
       if (!rc.ok) return resp(400, { ok: false, error: rc.error });
       datos = rc.datos;
     }

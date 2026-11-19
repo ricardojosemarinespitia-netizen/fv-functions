@@ -36,7 +36,9 @@ try {
   process.env.RESEND_API_KEY = "re_falsa_de_prueba";
   process.env.EMAIL_FELIPE = "avisos@felipevergel.com";
   process.env.RESEND_FROM = "Felipe Vergel <pedidos@felipevergel.com>";
-  delete process.env.BLACK_FRIDAY_ACTIVO; delete process.env.RESEND_DRY_RUN;
+  delete process.env.BLACK_FRIDAY_ACTIVO; delete process.env.RESEND_DRY_RUN; delete process.env.VIP_HASTA;
+  // Pasos 1-5: Black Friday YA iniciado (inicio simulado en el pasado).
+  process.env.BLACK_FRIDAY_DESDE = "2026-01-01T00:00:00-05:00";
 
   // Red: solo "responde" Resend (simulado); todo lo demás se bloquea y se anota.
   const resend = []; const bloqueadas = [];
@@ -52,6 +54,7 @@ try {
   const save = (await import("../netlify/functions/save-pending.js")).default;
   const hook = (await import("../netlify/functions/wompi-webhook.js")).default;
   const correo = (await import("../netlify/functions/enviar-correo.js")).default;
+  const vipFn = (await import("../netlify/functions/vip-codigo.js")).default;
   const O = "https://felipevergel.com";
   const req = (fn, body, origin = O) => new Request("https://x/.netlify/functions/" + fn, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin }, body: JSON.stringify(body) });
 
@@ -103,12 +106,63 @@ try {
   assert.equal(wa.status, 200);
   assert.deepEqual(resend.map((c) => c.cuerpo.subject).sort(), ["Pedido por WhatsApp · FV-1795000000002-WHATS · $254.150", "Recibimos tu pedido · FV-1795000000002-WHATS"]);
 
-  // 6) Origen ajeno
+  // 6) Antes del lanzamiento (inicio en el futuro): precio de lista, sin BF
+  process.env.BLACK_FRIDAY_DESDE = "2099-01-01T00:00:00-05:00";
+  const pre = await (await sign(req("wompi-sign", { ref: "FV-1795000000010-PREBF", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga" }))).json();
+  assert.equal(pre.resumen.subtotal, 299000); assert.equal(pre.resumen.blackFriday.activo, false); assert.equal(pre.amountInCents, 29900000);
+
+  // 7) FV20 de punta a punta (antes del lanzamiento: el único descuento)
+  const firmarEvento = (id, status, ref, cents) => {
+    const d = { transaction: { id, status, reference: ref, amount_in_cents: cents } };
+    const cs = crypto.createHash("sha256").update(id + status + cents + ts + "eventos_de_prueba").digest("hex");
+    return new Request("https://x/.netlify/functions/wompi-webhook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "transaction.updated", data: d, timestamp: ts, signature: { properties: props, checksum: cs } }) });
+  };
+  resend.length = 0;
+  const sv = await vipFn(req("vip-codigo", { accion: "solicitar", origen: "vip", nombre: "Vera", email: "vera@example.com", web: "" }));
+  const jv = await sv.json();
+  assert.equal(sv.status, 200, JSON.stringify(jv)); assert.match(jv.codigo, /^FV20-[A-Z0-9]{7}$/); assert.equal(jv.correo, true);
+  assert.equal(resend.length, 2, "correo VIP a cliente + aviso a Felipe");
+  const COD = jv.codigo;
+  const ver = async () => (await (await vipFn(req("vip-codigo", { accion: "verificar", codigo: COD }))).json()).estado;
+  assert.equal(await ver(), "valido");
+  // 7a) pago RECHAZADO: el código sigue válido
+  const refV1 = "FV-1795000000020-VIPUN";
+  const s1 = await (await sign(req("wompi-sign", { ref: refV1, items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "domicilio", discountCode: COD }))).json();
+  // 299.000 - 20 % = 239.200; envío 15 % (tramo hasta 310.000) = 35.880; total 275.080
+  assert.equal(s1.resumen.descuento, 59800); assert.equal(s1.resumen.tipoDescuento, "vip"); assert.equal(s1.resumen.codigo, COD); assert.equal(s1.amountInCents, 27508000);
+  await save(req("save-pending", { ref: refV1, fullName: "Vera", email: "vera@example.com", deliveryMethod: "domicilio", paymentMethod: "pse", discountCode: COD, cart: [{ id: "lampara-caribe-brisa", qty: 1, price: 299000, name: "Lámpara Caribe Brisa", color: "Azul" }] }));
+  assert.equal((await hook(firmarEvento("tx-v1", "DECLINED", refV1, 29900000))).status, 200);
+  assert.equal(await ver(), "valido", "un pago rechazado no gasta el código");
+  // 7b) pago APROBADO: se marca usado (aunque el navegador ya lo marcó "done")
+  const refV2 = "FV-1795000000021-VIPDO";
+  await sign(req("wompi-sign", { ref: refV2, items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "domicilio", discountCode: COD }));
+  await save(req("save-pending", { ref: refV2, fullName: "Vera", email: "vera@example.com", deliveryMethod: "domicilio", paymentMethod: "pse", discountCode: COD, cart: [{ id: "lampara-caribe-brisa", qty: 1, price: 299000, name: "Lámpara Caribe Brisa", color: "Azul" }], _status: "done" }));
+  resend.length = 0;
+  assert.equal((await hook(firmarEvento("tx-v2", "APPROVED", refV2, 29900000))).status, 200);
+  assert.equal(await ver(), "usado", "pago aprobado gasta el código");
+  // 7c) reusar el código: el servidor cobra sin descuento (el checkout no abre Wompi)
+  const s3 = await (await sign(req("wompi-sign", { ref: "FV-1795000000022-VIPRE", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "domicilio", discountCode: COD }))).json();
+  assert.equal(s3.resumen.descuento, 0); assert.equal(s3.resumen.veredictoCodigo, "usado"); assert.equal(s3.resumen.codigo, "");
+  // 7d) FV20 después del lanzamiento: reemplaza al 15 % (sobre lista), no se acumula
+  process.env.BLACK_FRIDAY_DESDE = "2026-01-01T00:00:00-05:00";
+  const jv2 = await (await vipFn(req("vip-codigo", { accion: "solicitar", origen: "circulo", email: "post@example.com", web: "" }))).json();
+  const s4 = await (await sign(req("wompi-sign", { ref: "FV-1795000000023-VIPBF", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: jv2.codigo }))).json();
+  assert.equal(s4.resumen.subtotal, 299000); assert.equal(s4.resumen.descuentoBF, 0); assert.equal(s4.resumen.descuento, 59800); assert.equal(s4.amountInCents, 23920000);
+  // 7e) FV15 durante BF: mismo 15 %, no se guarda como código (no se gasta)
+  const s5 = await (await sign(req("wompi-sign", { ref: "FV-1795000000024-CLUBF", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-ABC1234" }))).json();
+  assert.equal(s5.resumen.subtotal, 254150); assert.equal(s5.resumen.descuento, 0); assert.equal(s5.resumen.codigo, ""); assert.equal(s5.resumen.veredictoCodigo, "igual-que-black-friday");
+  // 7f) Correo de pedido por WhatsApp con FV20 válido: el 20 % sale en el correo
+  resend.length = 0;
+  const waV = await correo(req("enviar-correo", { tipo: "pedido", datos: { ref: "FV-1795000000025-WAVIP", fullName: "Post", email: "post@example.com", paymentMethod: "whatsapp", deliveryMethod: "bucaramanga", discountCode: jv2.codigo, total: 239200, subtotal: 299000, cart: [{ id: "lampara-caribe-brisa", qty: 1, name: "Lámpara Caribe Brisa", color: "Azul", price: 254150 }] } }));
+  assert.equal(waV.status, 200);
+  assert.ok(resend.every((c) => c.cuerpo.html.includes("$239.200") && c.cuerpo.html.includes(jv2.codigo)));
+
+  // 8) Origen ajeno
   assert.equal((await correo(req("enviar-correo", { tipo: "club", datos: {} }, "https://evil.example"))).status, 403);
 
   // Lo único que intentó salir (y se bloqueó): Google Forms / Apps Script.
   assert.ok(bloqueadas.every((u) => /docs\.google\.com|script\.google\.com/.test(u)), "salida inesperada: " + bloqueadas.join(", "));
-  console.log("OK e2e: firma, guardado, enviar-correo (PSE con montos del servidor, pedido ajeno 403, WhatsApp recalculado), webhook firmado e idempotente. Salidas bloqueadas:", bloqueadas.length);
+  console.log("OK e2e: firma, guardado, enviar-correo, webhook firmado e idempotente, inicio de BF por hora, FV20 completo (rechazado no gasta, aprobado gasta, reuso sin descuento, reemplaza BF), FV15 en BF no se gasta. Salidas bloqueadas:", bloqueadas.length);
 } finally {
   limpiar();
 }

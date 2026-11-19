@@ -22,26 +22,46 @@ export { CATALOGO };
 //
 //  Variables de entorno en Netlify (opcionales):
 //    BLACK_FRIDAY_ACTIVO = "1" | "0"    sin definir -> BF_ACTIVO_POR_DEFECTO
+//    BLACK_FRIDAY_DESDE  = ISO 8601     sin definir -> BF_DESDE (inicio automatico)
 //    BLACK_FRIDAY_HASTA  = ISO 8601     sin definir -> BF_HASTA (null = sin fin)
 //  El % NO va por variable a proposito: tiene que ser el mismo numero
 //  que products.js, y una variable olvidada en Netlify lo romperia.
+//  La HORA la decide el reloj del SERVIDOR (Date.now() de Netlify), nunca el
+//  del navegador: antes de BF_DESDE se cobra precio de lista.
 export const PCT_BLACK_FRIDAY = 15;
 export const BF_ACTIVO_POR_DEFECTO = true;
+// Viernes 27-nov-2026, 1:00 a. m. hora de Colombia (UTC-5). MISMO valor que
+// FV_BF.desde en products.js (las pruebas lo comparan).
+export const BF_DESDE = "2026-11-27T01:00:00-05:00";
 export const BF_HASTA = null;            // no se inventa fecha de fin
-export const BF_ACUMULA_CODIGO = false;  // FV15 no se suma durante la campana (PENDIENTE Ricardo)
+export const BF_ACUMULA_CODIGO = false;  // regla de Ricardo: nunca se acumulan descuentos
 
 const SI = ["1", "true", "si", "sí", "on", "yes"];
 
 export function configBlackFriday(env = (typeof process !== "undefined" ? process.env : {}), ahora = Date.now()) {
+  env = env || {};
   const v = String(env.BLACK_FRIDAY_ACTIVO == null ? "" : env.BLACK_FRIDAY_ACTIVO).trim().toLowerCase();
-  let activo = v === "" ? BF_ACTIVO_POR_DEFECTO : SI.includes(v);
+  const encendido = v === "" ? BF_ACTIVO_POR_DEFECTO : SI.includes(v);
+  let activo = encendido;
+  const desde = env.BLACK_FRIDAY_DESDE || BF_DESDE;
   const hasta = env.BLACK_FRIDAY_HASTA || BF_HASTA;
+  if (activo && desde) {
+    const t = Date.parse(desde);
+    if (!Number.isNaN(t) && ahora < t) activo = false;
+  }
   if (activo && hasta) {
     const t = Date.parse(hasta);
     if (!Number.isNaN(t) && ahora >= t) activo = false;
   }
-  return { activo, pct: activo ? PCT_BLACK_FRIDAY : 0, acumulaCodigo: BF_ACUMULA_CODIGO, hasta: hasta || null };
+  return { activo, pct: activo ? PCT_BLACK_FRIDAY : 0, acumulaCodigo: BF_ACUMULA_CODIGO, desde: desde || null, hasta: hasta || null, encendido };
 }
+
+// ── CODIGO VIP (FV20) ───────────────────────────────────────
+//  20 % sobre el precio de LISTA de todo el pedido. Reemplaza a Black
+//  Friday y al codigo del Club (nunca se acumulan). Un solo uso: se marca
+//  usado solo cuando Wompi aprueba (wompi-webhook). Ver lib/vip.js.
+export const RE_CODIGO_VIP = /^FV20-[A-Z0-9]{7}$/;
+export const PCT_VIP = 0.20;
 
 // Precio final de UNA unidad. Misma formula que products.js:
 //   final = Math.round(lista * (100 - pct) / 1000) * 10
@@ -71,19 +91,24 @@ export const PCT_DESCUENTO = 0.15;
  * Recalcula el total del pedido SOLO con datos del servidor.
  * @param {Array<{id:string, qty:number}>} items  ids y cantidades que manda el navegador
  * @param {string} metodoEntrega  "bucaramanga" | "domicilio"
- * @param {boolean} descuentoValido  true si el codigo del Club se verifico (y puede aplicarse)
+ * @param {boolean} descuentoValido  true si el codigo del Club (FV15) se verifico
  * @param {{activo:boolean,pct:number,acumulaCodigo:boolean}} [bf]  config de Black Friday
+ * @param {{vip?:boolean}} [opts]  vip:true si un codigo FV20 se verifico (valido y sin usar)
  * @returns {{subtotalLista:number, descuentoBF:number, subtotal:number, descuento:number,
- *            envio:number, total:number, lineas:Array, desconocidos:Array, blackFriday:object}}
+ *            envio:number, total:number, lineas:Array, desconocidos:Array, blackFriday:object,
+ *            tipoDescuento:"ninguno"|"bf"|"club"|"vip", codigoIgualQueBF:boolean}}
  *
- *  subtotal      = suma(precio FINAL x qty)   (ya con Black Friday)
- *  descuento     = codigo del Club sobre ese subtotal (0 si BF no acumula)
- *  envio         = sobre (subtotal - descuento)
- *  total         = subtotal - descuento + envio
+ *  UN SOLO DESCUENTO POR PEDIDO (regla de Ricardo):
+ *   - FV20 valido          -> precios de lista, descuento = 20 % del subtotal de lista
+ *   - FV15 valido sin BF   -> precios de lista, descuento = 15 % del subtotal
+ *   - FV15 valido con BF   -> precios BF, descuento 0 (mismo 15 %: el codigo NO se gasta)
+ *   - sin codigo           -> precios BF si la campana esta activa, si no lista
+ *  envio = sobre (subtotal - descuento); total = subtotal - descuento + envio
  *  subtotalLista / descuentoBF son informativos (subtotalLista - descuentoBF = subtotal).
  */
-export function recalcularTotal(items, metodoEntrega, descuentoValido, bf = configBlackFriday()) {
-  const pct = bf && bf.activo ? bf.pct : 0;
+export function recalcularTotal(items, metodoEntrega, descuentoValido, bf = configBlackFriday(), opts = {}) {
+  const vip = !!(opts && opts.vip);
+  const pct = !vip && bf && bf.activo ? bf.pct : 0;
   const lineas = [];
   const desconocidos = [];
   let subtotalLista = 0;
@@ -104,8 +129,10 @@ export function recalcularTotal(items, metodoEntrega, descuentoValido, bf = conf
     lineas.push({ id, qty, precio: final, precioLista: pieza.precio, sku: pieza.sku, nombre: pieza.nombre });
   }
 
-  const codigoAplica = !!descuentoValido && !(pct > 0 && bf && bf.acumulaCodigo === false);
-  const descuento = codigoAplica ? Math.round(subtotal * PCT_DESCUENTO) : 0;
+  const codigoIgualQueBF = !vip && !!descuentoValido && pct > 0 && !!bf && bf.acumulaCodigo === false;
+  const codigoAplica = !vip && !!descuentoValido && !codigoIgualQueBF;
+  const descuento = vip ? Math.round(subtotal * PCT_VIP) : codigoAplica ? Math.round(subtotal * PCT_DESCUENTO) : 0;
+  const tipoDescuento = vip ? "vip" : codigoAplica ? "club" : pct > 0 ? "bf" : "ninguno";
   const subtotalConDescuento = subtotal - descuento;
   const envio = calcularEnvio(subtotalConDescuento, metodoEntrega === "bucaramanga" ? "bucaramanga" : "domicilio");
   const total = subtotalConDescuento + envio;
@@ -119,6 +146,8 @@ export function recalcularTotal(items, metodoEntrega, descuentoValido, bf = conf
     total,
     lineas,
     desconocidos,
-    blackFriday: { activo: pct > 0, pct, acumulaCodigo: bf ? bf.acumulaCodigo : true }
+    blackFriday: { activo: pct > 0, pct, acumulaCodigo: bf ? bf.acumulaCodigo : true, campanaActiva: !!(bf && bf.activo) },
+    tipoDescuento,
+    codigoIgualQueBF
   };
 }

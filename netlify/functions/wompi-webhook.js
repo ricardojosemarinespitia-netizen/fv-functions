@@ -24,6 +24,7 @@ import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 import { enviarCorreos, limpiarPedido } from "./lib/correos.js";
+import { STORE_VIP, RE_FV20, marcarVipUsado } from "./lib/vip.js";
 
 // --- Configuración pública ---
 const FORM_ID             = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
@@ -165,6 +166,20 @@ export default async (req) => {
     return new Response(`Sin pedido pendiente para ${ref}`, { status: 200 });
   }
 
+  // 3.5) Código VIP (FV20): se gasta SOLO aquí, con el pago APROBADO por Wompi,
+  //      y solo si fue el código que dio el descuento cobrado (wompi-sign
+  //      guarda discountCode únicamente en ese caso). Va ANTES de la
+  //      idempotencia: si el navegador ya marcó el pedido como "done", el
+  //      código igual tiene que quedar usado. marcarVipUsado es idempotente.
+  if (pedido._serverPriced && RE_FV20.test(String(pedido.discountCode || "")) && Number(pedido.discountAmount) > 0) {
+    try {
+      const rv = await marcarVipUsado(getStore(STORE_VIP), pedido.discountCode, ref);
+      if (!rv.ok) console.error("wompi-webhook: no se pudo marcar el FV20", pedido.discountCode, rv.motivo);
+    } catch (e) {
+      console.error("wompi-webhook: error marcando FV20 (revisar a mano):", pedido.discountCode, ref, e && e.message);
+    }
+  }
+
   // 4) Idempotencia: si ya se procesó (aquí o en el navegador), no repetir
   if (pedido._status === "done") {
     return new Response("Ya estaba procesado", { status: 200 });
@@ -267,7 +282,8 @@ export default async (req) => {
   //    usa el resto del sitio) dejo de aceptar escrituras sin clave el
   //    27-jul-2026: antes cualquiera con la URL podia marcar cualquier
   //    codigo como usado sin autorizacion. Ahora exige VENTAS_KEY.
-  if (pedido.discountCode) {
+  //    (FV20 no: ese se marcó arriba en el almacén VIP.)
+  if (pedido.discountCode && !RE_FV20.test(String(pedido.discountCode))) {
     try {
       await fetch(VENTAS_API, {
         method: "POST",

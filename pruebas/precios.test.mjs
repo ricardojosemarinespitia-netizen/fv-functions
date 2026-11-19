@@ -11,16 +11,26 @@ import fs from "node:fs";
 import vm from "node:vm";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { recalcularTotal, configBlackFriday, precioFinal, PCT_BLACK_FRIDAY, BF_ACUMULA_CODIGO, CATALOGO } from "../netlify/functions/lib/catalogo-precios.js";
+import { recalcularTotal, configBlackFriday, precioFinal, PCT_BLACK_FRIDAY, BF_ACUMULA_CODIGO, BF_DESDE, CATALOGO } from "../netlify/functions/lib/catalogo-precios.js";
 import { FV_BF_SITIO } from "../netlify/functions/lib/catalogo-datos.js";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const SITIO = process.argv[3] || path.resolve(AQUI, "..", "..", "..");
 const PRODUCTS_JS = process.argv[2] || path.join(SITIO, "products.js");
 
+// Relojes simulados: ON = viernes 27-nov-2026 01:00:00 (UTC-5) exacto;
+// PRE = un segundo antes (00:59:59). El cliente usa Date.now() del navegador
+// y el servidor el suyo: aqui se fuerzan los dos al mismo instante.
+const ON = Date.parse("2026-11-27T01:00:00-05:00");
+const PRE = ON - 1000;
+
 // ---------- CLIENTE ----------
-function cargarCliente(bfOverride) {
-  const ctx = { console, Date };
+function cargarCliente(bfOverride, ahora = ON) {
+  class FakeDate extends Date {
+    constructor(...a) { super(...(a.length ? a : [ahora])); }
+    static now() { return ahora; }
+  }
+  const ctx = { console, Date: FakeDate };
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(PRODUCTS_JS, "utf8") + "\n;globalThis.PRODUCTS=PRODUCTS;", ctx);
@@ -34,43 +44,46 @@ function cargarCliente(bfOverride) {
   }
   return ctx;
 }
-// Replica el calculo de renderSummary() de customer-info.html / checkout.html.
-function totalCliente(c, cart, metodo, codigoValido) {
+// fvResumen() de products.js: lo que usan customer-info.html y checkout.html.
+function totalCliente(c, cart, metodo, codigo) {
   cart = c.fvNormalizarCarrito(JSON.parse(JSON.stringify(cart)));
-  const tot = c.fvTotalesCarrito(cart);
-  const bfSinCodigo = c.fvBFActivo() && !c.FV_BF.acumulaCodigo;
-  const subtotal = tot.final;
-  const descuento = (codigoValido && !bfSinCodigo) ? Math.round(subtotal * 0.15) : 0;
-  const envioCI = c.envioCI(subtotal - descuento, metodo);
-  const envioCO = c.envioCO(subtotal - descuento, metodo);
-  assert.equal(envioCI, envioCO, "customer-info y checkout calculan distinto envio");
-  assert.equal(envioCI, c.fvEnvio(subtotal - descuento, metodo), "fvEnvio distinto de calcShipping");
-  return { subtotalLista: tot.lista, descuentoBF: tot.ahorro, subtotal, descuento, envio: envioCI, total: subtotal - descuento + envioCI };
+  const cod = codigo === "vip" ? { code: "FV20-AB3CD7E", tipo: "vip" } : codigo ? { code: "FV15-ABC1234", tipo: "club" } : null;
+  const r = c.fvResumen(cart, metodo, cod);
+  const base = r.subtotal - r.descuento;
+  assert.equal(c.envioCI(base, metodo), r.envio, "customer-info calcShipping distinto de fvEnvio");
+  assert.equal(c.envioCO(base, metodo), r.envio, "checkout calcShipping distinto de fvEnvio");
+  return { subtotalLista: r.subtotalLista, descuentoBF: r.descuentoBF, subtotal: r.subtotal, descuento: r.descuento, envio: r.envio, total: r.total, codigoPago: r.codigoPago ? "si" : "no" };
 }
-function totalServidor(cart, metodo, codigoValido, bf) {
-  const r = recalcularTotal(cart.map((i) => ({ id: i.id, qty: i.qty })), metodo, codigoValido, bf);
+function totalServidor(cart, metodo, codigo, bf) {
+  const r = recalcularTotal(cart.map((i) => ({ id: i.id, qty: i.qty })), metodo, codigo === true || codigo === "club", bf, { vip: codigo === "vip" });
   assert.deepEqual(r.desconocidos, [], "piezas desconocidas en el servidor: " + r.desconocidos);
-  return { subtotalLista: r.subtotalLista, descuentoBF: r.descuentoBF, subtotal: r.subtotal, descuento: r.descuento, envio: r.envio, total: r.total };
+  return { subtotalLista: r.subtotalLista, descuentoBF: r.descuentoBF, subtotal: r.subtotal, descuento: r.descuento, envio: r.envio, total: r.total, codigoPago: r.descuento > 0 && codigo ? "si" : "no" };
 }
 
 let n = 0;
 const filas = [];
-function caso(nombre, cart, metodo, codigo, modo) {
-  const on = modo !== "off";
-  const c = cargarCliente(on ? null : { activo: false });
-  const bf = configBlackFriday(on ? { BLACK_FRIDAY_ACTIVO: "1" } : { BLACK_FRIDAY_ACTIVO: "0" });
-  const cli = totalCliente(c, cart, metodo, codigo);
+// modo: "on" (BF activo, 01:00:00), "pre" (00:59:59), "off" (apagado a mano)
+function caso(nombre, cart, metodo, codigo, modo = "on") {
+  const ahora = modo === "pre" ? PRE : ON;
+  const c = cargarCliente(modo === "off" ? { activo: false } : null, ahora);
+  const bf = configBlackFriday(modo === "off" ? { BLACK_FRIDAY_ACTIVO: "0" } : {}, ahora);
+  const cli = totalCliente(c, cart, metodo, codigo === true ? "club" : codigo);
   const srv = totalServidor(cart, metodo, codigo, bf);
   assert.deepEqual(cli, srv, nombre + ": cliente != servidor\n cli " + JSON.stringify(cli) + "\n srv " + JSON.stringify(srv));
   assert.ok(Number.isInteger(srv.total), "monto no entero");
   n++;
-  filas.push({ caso: nombre, modo: on ? "BF on" : "BF off", entrega: metodo, codigo: codigo ? "FV15" : "-", lista: srv.subtotalLista, ahorroBF: srv.descuentoBF, subtotal: srv.subtotal, descCodigo: srv.descuento, envio: srv.envio, total: srv.total });
+  filas.push({ caso: nombre, modo, entrega: metodo, codigo: codigo === "vip" ? "FV20" : codigo ? "FV15" : "-", lista: srv.subtotalLista, ahorroBF: srv.descuentoBF, subtotal: srv.subtotal, descCodigo: srv.descuento, envio: srv.envio, total: srv.total, gasta: srv.codigoPago });
   return srv;
 }
 
 // 0. Paridad de configuracion y catalogo
 assert.equal(FV_BF_SITIO.pct, PCT_BLACK_FRIDAY, "products.js y el servidor tienen distinto %");
 assert.equal(FV_BF_SITIO.acumulaCodigo, BF_ACUMULA_CODIGO, "acumulaCodigo distinto");
+assert.equal(Date.parse(FV_BF_SITIO.desde), Date.parse(BF_DESDE), "products.js y el servidor tienen distinta hora de inicio");
+{
+  const sitio = cargarCliente(null, ON);
+  assert.equal(Date.parse(sitio.FV_BF.desde), ON, "FV_BF.desde no es el 27-nov 01:00 (UTC-5)");
+}
 {
   const c = cargarCliente();
   assert.equal(c.PRODUCTS.length, Object.keys(CATALOGO).length, "catalogo del servidor desactualizado: corre node generar-catalogo.mjs");
@@ -93,7 +106,7 @@ caso("1 pieza (Lampara Caribe Brisa)", [P("lampara-caribe-brisa")], "domicilio",
 caso("varias piezas", [P("lampara-caribe-brisa", 2), P("plato-postre", 6), P("candelabro-arco", 3)], "domicilio", false);
 caso("pieza cara (Triada)", [P("lampara-triada")], "domicilio", false);
 // 3. Con y sin codigo del Club
-caso("con codigo, BF on (no se suma)", [P("lampara-caribe-brisa")], "domicilio", true);
+caso("con codigo, BF on (mismo 15 %, no se gasta)", [P("lampara-caribe-brisa")], "domicilio", true);
 caso("con codigo, BF off (si resta 15 %)", [P("lampara-caribe-brisa")], "domicilio", true, "off");
 caso("sin codigo, BF off", [P("lampara-caribe-brisa")], "domicilio", false, "off");
 // 4. Bucaramanga gratis
@@ -186,9 +199,47 @@ caso("Bucaramanga gratis + codigo BF off", [P("centro-mesa-marea")], "bucaramang
   const c = cargarCliente({ hasta: "2020-01-01T00:00:00-05:00" });
   assert.equal(c.fvBFActivo(), false);
   assert.equal(configBlackFriday({ BLACK_FRIDAY_HASTA: "2020-01-01T00:00:00-05:00" }).activo, false);
-  assert.equal(configBlackFriday({}).activo, true, "por defecto activo (BF_ACTIVO_POR_DEFECTO)");
-  assert.equal(configBlackFriday({ BLACK_FRIDAY_ACTIVO: "0" }).activo, false);
+  assert.equal(configBlackFriday({}, ON).activo, true, "a las 01:00:00 debe estar activo");
+  assert.equal(configBlackFriday({}, PRE).activo, false, "a las 00:59:59 NO debe estar activo");
+  assert.equal(configBlackFriday({ BLACK_FRIDAY_ACTIVO: "0" }, ON).activo, false);
+  assert.equal(configBlackFriday({ BLACK_FRIDAY_ACTIVO: "false" }, ON).activo, false);
+  // Adelantar / retrasar con un solo valor por lado
+  assert.equal(configBlackFriday({ BLACK_FRIDAY_DESDE: "2026-11-26T00:00:00-05:00" }, PRE).activo, true);
+  assert.equal(cargarCliente({ desde: "2026-11-26T00:00:00-05:00" }, PRE).fvBFActivo(), true);
+  assert.equal(cargarCliente(null, ON).fvBFActivo(), true, "cliente a las 01:00:00");
+  assert.equal(cargarCliente(null, PRE).fvBFActivo(), false, "cliente a las 00:59:59");
   n++;
+}
+
+// 8. MATRIZ completa: hora (00:59:59 / 01:00:00 / apagado) x codigo (ninguno /
+//    FV15 / FV20) x entrega (domicilio / Bucaramanga) x carritos que cruzan
+//    los tramos de envio. Un solo descuento por pedido; cliente = servidor.
+{
+  const carritos = {
+    "1 Brisa (299k)": [P("lampara-caribe-brisa")],
+    "2 porta plantas (216k)": [P("porta-plantas-individual", 2)],
+    "Maxi Hoja (310k)": [P("bandeja-hoja-maxi-irregular")],
+    "2 solitarios (180k)": [P("solitario-circular", 2)],
+    "mixto grande": [P("lampara-caribe-brisa", 2), P("plato-postre", 6), P("candelabro-arco", 3)]
+  };
+  for (const modo of ["pre", "on", "off"]) for (const codigo of [false, "club", "vip"]) for (const metodo of ["domicilio", "bucaramanga"]) for (const [nom, cart] of Object.entries(carritos)) {
+    const r = caso("matriz " + nom, cart, metodo, codigo, modo);
+    const lista = r.subtotalLista;
+    if (codigo === "vip") {
+      assert.equal(r.subtotal, lista, "FV20 va sobre lista");
+      assert.equal(r.descuentoBF, 0, "FV20 quita Black Friday");
+      assert.equal(r.descuento, Math.round(lista * 0.2));
+      assert.equal(r.codigoPago, "si");
+    } else if (codigo === "club" && modo === "on") {
+      assert.equal(r.descuento, 0, "FV15 en BF no suma"); assert.equal(r.codigoPago, "no", "FV15 en BF no se gasta");
+    } else if (codigo === "club") {
+      assert.equal(r.descuento, Math.round(lista * 0.15)); assert.equal(r.codigoPago, "si");
+    } else {
+      assert.equal(r.descuento, 0);
+      assert.equal(r.descuentoBF > 0, modo === "on", "BF solo desde las 01:00:00");
+    }
+    if (metodo === "bucaramanga") assert.equal(r.envio, 0);
+  }
 }
 
 console.table(filas);

@@ -11,7 +11,7 @@ if (!SITIO) { console.error("Uso: node test/coherencia-sitio.test.mjs <carpeta d
 const leer = (f) => fs.readFileSync(path.join(SITIO, f), "utf8");
 const index = leer("index.html");
 
-// 1) fnv1a7 del sitio = codigoClub del servidor
+// 1) fnv1a7 del sitio = codigoClub del servidor (códigos FV15 ya emitidos)
 const m = index.match(/function fnv1a7\(str\) \{[\s\S]*?\n  \}/);
 assert.ok(m, "no encontré fnv1a7 en index.html");
 const fnv1a7 = new Function(m[0] + "; return fnv1a7;")();
@@ -21,7 +21,11 @@ for (const e of ["ana@example.com", "laura.perez+bf@gmail.com", "x@y.co", "ÑAND
 
 // 2) URL de la función y CSP
 const URL_FN = "https://exquisite-pasca-848b8b.netlify.app/.netlify/functions/enviar-correo";
-assert.ok(index.includes(URL_FN), "index.html no llama a enviar-correo");
+const URL_VIP = "https://exquisite-pasca-848b8b.netlify.app/.netlify/functions/vip-codigo";
+assert.ok(index.includes(URL_VIP), "index.html (Círculo) no llama a vip-codigo");
+assert.ok(leer("vip/index.html").includes(URL_VIP), "/vip no llama a vip-codigo");
+assert.ok(leer("customer-info.html").includes(URL_VIP), "customer-info no verifica FV20");
+assert.ok(!/Vista previa/.test(leer("vip/index.html")), "/vip sigue en vista previa");
 assert.ok(leer("checkout.html").includes(URL_FN), "checkout.html no llama a enviar-correo");
 for (const f of ["index.html", "checkout.html", "customer-info.html", "product.html", "_headers"]) {
   const t = leer(f);

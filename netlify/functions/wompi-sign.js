@@ -22,7 +22,8 @@
 // ============================================================
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { recalcularTotal, RE_CODIGO, configBlackFriday } from "./lib/catalogo-precios.js";
+import { recalcularTotal, RE_CODIGO, RE_CODIGO_VIP, configBlackFriday } from "./lib/catalogo-precios.js";
+import { STORE_VIP, estadoCodigoVip } from "./lib/vip.js";
 
 // Origenes autorizados a pedir una firma. No es la barrera de seguridad
 // (esa es el recalculo del monto), pero evita que la funcion se use desde
@@ -135,15 +136,25 @@ export default async (req) => {
   // sitio y se aplica el 15%: preferimos cobrar de menos a cobrarle al cliente
   // un total distinto del que vio en pantalla.
   const codigo = String((body.discountCode || "")).trim().toUpperCase();
-  // Black Friday: mismo interruptor/porcentaje que products.js. Si la campana
-  // no acumula el codigo del Club, ni se consulta al Club (ahorra 2,5 s con la
-  // ventana de Wompi en blanco) ni se aplica ni se marca como usado.
+  // Un solo descuento por pedido (regla de Ricardo). La hora la pone ESTE
+  // servidor: antes de BF_DESDE no hay Black Friday aunque el navegador crea
+  // que si (reloj del celular adelantado).
   const bf = configBlackFriday();
-  const bfSinCodigo = bf.activo && !bf.acumulaCodigo;
   let descuentoValido = false;
+  let vip = false;
   let veredicto = "sin-codigo";
-  if (codigo && bfSinCodigo) {
-    veredicto = "no-acumulable-black-friday";
+  if (codigo && RE_CODIGO_VIP.test(codigo)) {
+    // FV20: almacen propio en Netlify Blobs (lib/vip.js). Si no se puede
+    // verificar NO se aplica: el checkout ve un total mayor y no abre Wompi.
+    let store = null;
+    try { store = getStore(STORE_VIP); } catch {}
+    veredicto = (await estadoCodigoVip(store, codigo)).estado;
+    vip = veredicto === "valido";
+  } else if (codigo && RE_CODIGO.test(codigo) && bf.activo && !bf.acumulaCodigo) {
+    // FV15 durante Black Friday: da el mismo 15 % que ya tienen los precios.
+    // No se consulta al Club (ahorra 2,5 s con Wompi en blanco), no resta
+    // nada extra y NO se marca como usado.
+    veredicto = "igual-que-black-friday";
   } else if (codigo && RE_CODIGO.test(codigo)) {
     veredicto = await verificarCodigo(codigo);
     descuentoValido = veredicto !== "invalido";
@@ -151,7 +162,9 @@ export default async (req) => {
     veredicto = "formato-invalido";
   }
 
-  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido, bf);
+  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido, bf, { vip });
+  // Solo queda guardado (y se marca usado al aprobarse) el codigo que de
+  // verdad dio el descuento cobrado.
   const codigoAplicado = r.descuento > 0 ? codigo : null;
 
   if (!r.lineas.length) {
@@ -192,6 +205,7 @@ export default async (req) => {
       subtotalLista: r.subtotalLista,
       descuentoBF: r.descuentoBF,
       bfPct: r.blackFriday.pct,
+      tipoDescuento: r.tipoDescuento,
       // Precios del catalogo, por id: save-pending corrige con esto el precio
       // de cada linea del carrito que mande el navegador.
       _serverLineas: r.lineas,
@@ -220,7 +234,8 @@ export default async (req) => {
       desconocidos: r.desconocidos,
       subtotalLista: r.subtotalLista,
       descuentoBF: r.descuentoBF,
-      blackFriday: r.blackFriday
+      blackFriday: r.blackFriday,
+      tipoDescuento: r.tipoDescuento
     }
   }), { status: 200, headers: H });
 };

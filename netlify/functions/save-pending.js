@@ -28,7 +28,7 @@ import { getStore } from "@netlify/blobs";
 // y la foto de cada pieza, y los correos los usan. Lo que sí se hace es
 // corregir el precio de cada línea contra _serverLineas (ver abajo).
 // Black Friday: subtotalLista/descuentoBF/bfPct tambien los fija wompi-sign.
-const CAMPOS_DE_DINERO = ["subtotal", "discountAmount", "shipping", "total", "discountCode", "subtotalLista", "descuentoBF", "bfPct"];
+const CAMPOS_DE_DINERO = ["subtotal", "discountAmount", "shipping", "total", "discountCode", "subtotalLista", "descuentoBF", "bfPct", "tipoDescuento"];
 
 // La referencia la genera checkout.html como FV-<epoch>-<alfanumérico>.
 // Rechazar cualquier otra forma evita que alguien llene el almacén de blobs

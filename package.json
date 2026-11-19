@@ -9,6 +9,6 @@
   },
   "scripts": {
     "catalogo": "node generar-catalogo.mjs",
-    "test": "node test/correos.test.mjs && node test/adaptador.test.mjs"
+    "test": "node test/correos.test.mjs && node test/adaptador.test.mjs && node test/vip.test.mjs"
   }
 }
