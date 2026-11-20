@@ -32,6 +32,12 @@ for (const f of ["index.html", "checkout.html", "customer-info.html", "product.h
   assert.ok(!/emailjs/i.test(t), f + " todavía menciona EmailJS");
   const csp = (t.match(/connect-src[^;"]*/) || [""])[0];
   assert.ok(csp.includes("https://exquisite-pasca-848b8b.netlify.app"), f + ": connect-src sin el servidor de funciones");
+  // Supabase es la base: el sitio ya no habla con la hoja (Apps Script) ni con Google Forms.
+  assert.ok(!/script\.google\.com|script\.googleusercontent\.com|docs\.google\.com/.test(t), f + " todavía menciona Apps Script / Google Forms");
 }
+const ci = leer("customer-info.html");
+assert.ok(!/action=checkCode/.test(ci), "customer-info sigue verificando FV15 en el Apps Script");
+assert.ok(/accion:"registrado"/.test(index), "el Círculo no consulta 'registrado' en vip-codigo");
+assert.ok(/pedido:datosPedido\(order\)/.test(leer("checkout.html")), "checkout no manda el pedido de WhatsApp a ventas-registrar");
 assert.deepEqual(ORIGENES_OK, ["https://felipevergel.com", "https://www.felipevergel.com"]);
 console.log("coherencia sitio/servidor OK");
