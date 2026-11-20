@@ -47,7 +47,7 @@ function cargarCliente(bfOverride, ahora = ON) {
 // fvResumen() de products.js: lo que usan customer-info.html y checkout.html.
 function totalCliente(c, cart, metodo, codigo) {
   cart = c.fvNormalizarCarrito(JSON.parse(JSON.stringify(cart)));
-  const cod = codigo === "vip" ? { code: "FV20-AB3CD7E", tipo: "vip" } : codigo ? { code: "FV15-ABC1234", tipo: "club" } : null;
+  const cod = codigo === "vip" ? { code: "FV20-AB3CD7E", tipo: "vip" } : codigo === "circulo" ? { code: "FV10-AB3CD7E", tipo: "circulo" } : codigo ? { code: "FV15-ABC1234", tipo: "club" } : null;
   const r = c.fvResumen(cart, metodo, cod);
   const base = r.subtotal - r.descuento;
   assert.equal(c.envioCI(base, metodo), r.envio, "customer-info calcShipping distinto de fvEnvio");
@@ -55,7 +55,7 @@ function totalCliente(c, cart, metodo, codigo) {
   return { subtotalLista: r.subtotalLista, descuentoBF: r.descuentoBF, subtotal: r.subtotal, descuento: r.descuento, envio: r.envio, total: r.total, codigoPago: r.codigoPago ? "si" : "no" };
 }
 function totalServidor(cart, metodo, codigo, bf) {
-  const r = recalcularTotal(cart.map((i) => ({ id: i.id, qty: i.qty })), metodo, codigo === true || codigo === "club", bf, { vip: codigo === "vip" });
+  const r = recalcularTotal(cart.map((i) => ({ id: i.id, qty: i.qty })), metodo, codigo === true || codigo === "club", bf, { vip: codigo === "vip", circulo: codigo === "circulo" });
   assert.deepEqual(r.desconocidos, [], "piezas desconocidas en el servidor: " + r.desconocidos);
   return { subtotalLista: r.subtotalLista, descuentoBF: r.descuentoBF, subtotal: r.subtotal, descuento: r.descuento, envio: r.envio, total: r.total, codigoPago: r.descuento > 0 && codigo ? "si" : "no" };
 }
@@ -72,7 +72,7 @@ function caso(nombre, cart, metodo, codigo, modo = "on") {
   assert.deepEqual(cli, srv, nombre + ": cliente != servidor\n cli " + JSON.stringify(cli) + "\n srv " + JSON.stringify(srv));
   assert.ok(Number.isInteger(srv.total), "monto no entero");
   n++;
-  filas.push({ caso: nombre, modo, entrega: metodo, codigo: codigo === "vip" ? "FV20" : codigo ? "FV15" : "-", lista: srv.subtotalLista, ahorroBF: srv.descuentoBF, subtotal: srv.subtotal, descCodigo: srv.descuento, envio: srv.envio, total: srv.total, gasta: srv.codigoPago });
+  filas.push({ caso: nombre, modo, entrega: metodo, codigo: codigo === "vip" ? "FV20" : codigo === "circulo" ? "FV10" : codigo ? "FV15" : "-", lista: srv.subtotalLista, ahorroBF: srv.descuentoBF, subtotal: srv.subtotal, descCodigo: srv.descuento, envio: srv.envio, total: srv.total, gasta: srv.codigoPago });
   return srv;
 }
 
@@ -212,7 +212,7 @@ caso("Bucaramanga gratis + codigo BF off", [P("centro-mesa-marea")], "bucaramang
 }
 
 // 8. MATRIZ completa: hora (00:59:59 / 01:00:00 / apagado) x codigo (ninguno /
-//    FV15 / FV20) x entrega (domicilio / Bucaramanga) x carritos que cruzan
+//    FV15 / FV20 / FV10) x entrega (domicilio / Bucaramanga) x carritos que cruzan
 //    los tramos de envio. Un solo descuento por pedido; cliente = servidor.
 {
   const carritos = {
@@ -222,7 +222,7 @@ caso("Bucaramanga gratis + codigo BF off", [P("centro-mesa-marea")], "bucaramang
     "2 solitarios (180k)": [P("solitario-circular", 2)],
     "mixto grande": [P("lampara-caribe-brisa", 2), P("plato-postre", 6), P("candelabro-arco", 3)]
   };
-  for (const modo of ["pre", "on", "off"]) for (const codigo of [false, "club", "vip"]) for (const metodo of ["domicilio", "bucaramanga"]) for (const [nom, cart] of Object.entries(carritos)) {
+  for (const modo of ["pre", "on", "off"]) for (const codigo of [false, "club", "vip", "circulo"]) for (const metodo of ["domicilio", "bucaramanga"]) for (const [nom, cart] of Object.entries(carritos)) {
     const r = caso("matriz " + nom, cart, metodo, codigo, modo);
     const lista = r.subtotalLista;
     if (codigo === "vip") {
@@ -230,6 +230,11 @@ caso("Bucaramanga gratis + codigo BF off", [P("centro-mesa-marea")], "bucaramang
       assert.equal(r.descuentoBF, 0, "FV20 quita Black Friday");
       assert.equal(r.descuento, Math.round(lista * 0.2));
       assert.equal(r.codigoPago, "si");
+    } else if (codigo === "circulo" && modo === "on") {
+      assert.equal(r.descuento, 0, "FV10 en BF no suma (el 15 % publico es mayor)"); assert.equal(r.codigoPago, "no", "FV10 en BF no se gasta");
+      assert.ok(r.descuentoBF > 0, "con FV10 en BF siguen los precios BF");
+    } else if (codigo === "circulo") {
+      assert.equal(r.descuento, Math.round(lista * 0.10), "FV10 = 10 % sobre lista"); assert.equal(r.codigoPago, "si"); assert.equal(r.descuentoBF, 0);
     } else if (codigo === "club" && modo === "on") {
       assert.equal(r.descuento, 0, "FV15 en BF no suma"); assert.equal(r.codigoPago, "no", "FV15 en BF no se gasta");
     } else if (codigo === "club") {

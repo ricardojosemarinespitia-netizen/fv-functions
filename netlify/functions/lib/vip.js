@@ -6,11 +6,18 @@
 //  ("vip-codigos") y FV15 + suscriptores en la hoja de Google (Apps Script).
 //
 //    FV20-XXXXXXX  personal, 20 % sobre lista, un solo uso, uno por correo.
+//                  SOLO por /vip (origen "vip").
+//    FV10-XXXXXXX  personal del Círculo, 10 % sobre lista, un solo uso, uno
+//                  por correo (origen "circulo"). No vence con VIP_HASTA.
 //    FV15-XXXXXXX  Círculo histórico, 15 %, un solo uso (ya no se emiten).
 //
 //  Reglas (de Ricardo):
 //   - Un FV20 por correo: pedirlo otra vez devuelve el MISMO código
-//     (índice único parcial en la base: uq_codigos_fv20_por_email).
+//     (índice único parcial en la base: uq_codigos_fv20_por_email). Igual el
+//     FV10 (uq_codigos_fv10_por_email, ver migracion-supabase/05_fv10.sql).
+//   - Círculo: quien ya tiene FV20 recibe ESE (nunca se le baja a 10 %); quien
+//     no, recibe su FV10. Por /vip: quien solo tiene FV10 recibe un FV20 nuevo
+//     (los dos coexisten, se usa uno solo: nunca se suman).
 //   - Un solo uso: se marca usado SOLO cuando Wompi aprueba (wompi-webhook).
 //     Si el pago falla, sigue válido.
 //   - FV20 vence en VIP_HASTA (ISO 8601). Vacío = no vence. FV15 no vence.
@@ -27,15 +34,18 @@ import { legadoPorCodigo, legadoPorCorreo, importarLegado } from "./vip-legado.j
 
 export const RE_FV20 = /^FV20-[A-Z0-9]{7}$/;
 export const RE_FV15 = /^FV15-[A-Z0-9]{7}$/;
+export const RE_FV10 = /^FV10-[A-Z0-9]{7}$/;
 // Sin 0/O ni 1/I/L para que se pueda dictar y copiar a mano sin errores.
 const ALFABETO = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-export function generarCodigoVip(rnd = crypto.randomBytes) {
+function generarCodigoCon(prefijo, rnd = crypto.randomBytes) {
   const b = rnd(7);
   let s = "";
   for (let i = 0; i < 7; i++) s += ALFABETO[b[i] % ALFABETO.length];
-  return "FV20-" + s;
+  return prefijo + "-" + s;
 }
+export function generarCodigoVip(rnd = crypto.randomBytes) { return generarCodigoCon("FV20", rnd); }
+export function generarCodigoCirculo(rnd = crypto.randomBytes) { return generarCodigoCon("FV10", rnd); }
 
 export const normalizarEmail = (email) => String(email || "").trim().toLowerCase();
 export const normalizarCodigo = (codigo) => String(codigo || "").trim().toUpperCase();
@@ -52,12 +62,12 @@ const S = "/rest/v1/suscriptores";
 const CAMPOS = "codigo,tipo,email,usado,usado_en,referencia_pedido,creado_en";
 
 /**
- * Estado de un código FV20 o FV15. Nunca lanza.
+ * Estado de un código FV20, FV15 o FV10. Nunca lanza.
  * @returns {Promise<{estado:"valido"|"usado"|"vencido"|"invalido"|"sin-verificar", registro?:object}>}
  */
 export async function estadoCodigo(db, codigo, { env, ahora = Date.now(), timeoutMs, reintentos, fetchFn, legado } = {}) {
   const c = normalizarCodigo(codigo);
-  if (!RE_FV20.test(c) && !RE_FV15.test(c)) return { estado: "invalido" };
+  if (!RE_FV20.test(c) && !RE_FV15.test(c) && !RE_FV10.test(c)) return { estado: "invalido" };
   if (!db) return { estado: "sin-verificar" };
   const leerSb = () => sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { timeoutMs, reintentos, fetchFn });
   let r = await leerSb();
@@ -87,43 +97,61 @@ export class SupabaseNoDisponible extends Error {
   constructor(paso, detalle) { super(`supabase-no-disponible (${paso}): ${detalle || ""}`); this.paso = paso; }
 }
 
-async function fv20DeCorreo(db, email, fetchFn) {
-  const r = await sbFetch(db, `${T}?email=eq.${filtro(email)}&tipo=eq.FV20&select=${CAMPOS}`, { fetchFn });
-  if (!r.ok || !Array.isArray(r.datos)) throw new SupabaseNoDisponible("leer-fv20", r.error);
+async function codigoDeCorreo(db, email, tipo, fetchFn) {
+  const r = await sbFetch(db, `${T}?email=eq.${filtro(email)}&tipo=eq.${tipo}&select=${CAMPOS}`, { fetchFn });
+  if (!r.ok || !Array.isArray(r.datos)) throw new SupabaseNoDisponible("leer-" + tipo.toLowerCase(), r.error);
   return r.datos[0] || null;
 }
+const fv20DeCorreo = (db, email, fetchFn) => codigoDeCorreo(db, email, "FV20", fetchFn);
+const fv10DeCorreo = (db, email, fetchFn) => codigoDeCorreo(db, email, "FV10", fetchFn);
 
 /**
- * Devuelve el FV20 del correo (lo crea si no existe). Lanza SupabaseNoDisponible
- * si la base no responde: nunca inventa un código que no quedó guardado.
+ * Devuelve el código personal del correo (lo crea si no existe). Lanza
+ * SupabaseNoDisponible si la base no responde: nunca inventa un código que no
+ * quedó guardado.
+ *   origen "vip"     -> su FV20 (si solo tenía FV10, se crea el FV20: coexisten)
+ *   origen "circulo" -> su FV20 si ya lo tiene (nunca se le baja); si no, su FV10
+ * @returns {{codigo, tipo:"FV20"|"FV10", pct:20|10, nuevo:boolean, registro}}
  */
 export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.now(), rnd, fetchFn, legado } = {}) {
   if (!db) throw new SupabaseNoDisponible("sin-configurar");
   const e = normalizarEmail(email);
+  const salida = (registro, nuevo) => {
+    const tipo = registro.tipo === "FV10" ? "FV10" : "FV20";
+    return { codigo: registro.codigo, tipo, pct: tipo === "FV10" ? 10 : 20, nuevo, registro };
+  };
+  // 1) ¿ya tiene FV20 (Supabase o Blobs viejo)? Sirve para los dos orígenes.
   const previo = await fv20DeCorreo(db, e, fetchFn);
-  if (previo) return { codigo: previo.codigo, nuevo: false, registro: previo };
+  if (previo) return salida(previo, false);
   if (legado) {
     // Migración perezosa: si este correo ya tenía su FV20 en Blobs, es ESE.
     const viejo = await legadoPorCorreo(legado, e);
     if (viejo && (await importarLegado(db, viejo, { fetchFn }))) {
       const ya = await fv20DeCorreo(db, e, fetchFn);
-      if (ya) return { codigo: ya.codigo, nuevo: false, registro: ya };
+      if (ya) return salida(ya, false);
     }
   }
+  const esCirculo = origen === "circulo";
+  // 2) Círculo sin FV20: su FV10 (el que ya tenga, o uno nuevo).
+  if (esCirculo) {
+    const p10 = await fv10DeCorreo(db, e, fetchFn);
+    if (p10) return salida(p10, false);
+  }
+  const tipo = esCirculo ? "FV10" : "FV20";
   for (let i = 0; i < 5; i++) {
-    const registro = { codigo: generarCodigoVip(rnd), tipo: "FV20", email: e, origen: origen || "vip", creado_en: new Date(ahora).toISOString(), usado: false };
+    const registro = { codigo: esCirculo ? generarCodigoCirculo(rnd) : generarCodigoVip(rnd), tipo, email: e, origen: origen || "vip", creado_en: new Date(ahora).toISOString(), usado: false };
     const r = await sbFetch(db, T, { method: "POST", body: registro, prefer: "return=representation", fetchFn });
-    if (r.ok) return { codigo: registro.codigo, nuevo: true, registro: (Array.isArray(r.datos) && r.datos[0]) || registro };
+    if (r.ok) return salida((Array.isArray(r.datos) && r.datos[0]) || registro, true);
     if (r.status === 409) {
-      // O alguien creó el FV20 de este correo al mismo tiempo (índice único
+      // O alguien creó el código de este correo al mismo tiempo (índice único
       // por correo), o el código aleatorio ya existía: se mira cuál fue.
-      const ya = await fv20DeCorreo(db, e, fetchFn);
-      if (ya) return { codigo: ya.codigo, nuevo: false, registro: ya };
+      const ya = await codigoDeCorreo(db, e, tipo, fetchFn);
+      if (ya) return salida(ya, false);
       continue;
     }
-    throw new SupabaseNoDisponible("crear-fv20", r.error);
+    throw new SupabaseNoDisponible("crear-" + tipo.toLowerCase(), r.error);
   }
-  throw new SupabaseNoDisponible("crear-fv20", "no se pudo generar un código único");
+  throw new SupabaseNoDisponible("crear-" + tipo.toLowerCase(), "no se pudo generar un código único");
 }
 
 /**
@@ -202,7 +230,7 @@ async function estaRegistradoSb(db, email, { fetchFn } = {}) {
   const e = normalizarEmail(email);
   const [s, c] = await Promise.all([
     sbFetch(db, `${S}?email=eq.${filtro(e)}&origen=in.(circulo,vip)&baja=is.false&select=email`, { fetchFn, reintentos: 0, timeoutMs: 3000 }),
-    sbFetch(db, `${T}?email=eq.${filtro(e)}&tipo=eq.FV20&select=codigo`, { fetchFn, reintentos: 0, timeoutMs: 3000 })
+    sbFetch(db, `${T}?email=eq.${filtro(e)}&tipo=in.(FV20,FV10)&select=codigo`, { fetchFn, reintentos: 0, timeoutMs: 3000 })
   ]);
   if (!s.ok || !c.ok) return null;
   return (Array.isArray(s.datos) && s.datos.length > 0) || (Array.isArray(c.datos) && c.datos.length > 0);

@@ -2,13 +2,15 @@
 //  lib/vip-http.js  ·  Lógica HTTP de la función vip-codigo (sin Netlify)
 // ------------------------------------------------------------
 //  POST {"accion":"solicitar","nombre","email","origen":"vip"|"circulo","web":""}
-//    -> crea (o recupera) el FV20 de ese correo, lo envía por Resend y lo
-//       devuelve para mostrarlo en pantalla.
-//       200 {ok:true, codigo, nuevo, correo:true|false}
+//    -> crea (o recupera) el código personal de ese correo, lo envía por Resend
+//       y lo devuelve para mostrarlo en pantalla.
+//         origen "vip"     -> FV20 (20 %)
+//         origen "circulo" -> su FV20 si ya lo tiene; si no, FV10 (10 %)
+//       200 {ok:true, codigo, tipo:"FV20"|"FV10", pct:20|10, nuevo, correo:true|false}
 //       Opcional "metodo":"email"|"google" (cómo dejó el correo).
 //       El correo queda en Supabase `suscriptores` y el código en
 //       `codigos_descuento`.
-//  POST {"accion":"verificar","codigo"}   (FV20 o FV15)
+//  POST {"accion":"verificar","codigo"}   (FV20, FV15 o FV10)
 //    -> 200 {ok:true, estado:"valido"|"usado"|"vencido"|"invalido"|"sin-verificar"}
 //  POST {"accion":"registrado","email"}   (reemplaza "check" del Apps Script)
 //    -> 200 {ok:true, registrado:true|false}  · 503 si no se pudo consultar
@@ -93,12 +95,13 @@ export async function procesarVip(req, deps = {}) {
   if (err.length) return resp(400, { ok: false, error: "datos-invalidos", detalle: err });
 
   const vipCfg = configVip(env);
-  if (vipCfg.hastaMs != null && ahora >= vipCfg.hastaMs) return resp(410, { ok: false, error: "vip-cerrado" });
+  // VIP_HASTA cierra solo /vip: el FV10 del Círculo no vence con él.
+  if (origenCodigo === "vip" && vipCfg.hastaMs != null && ahora >= vipCfg.hastaMs) return resp(410, { ok: false, error: "vip-cerrado" });
 
   if (!(await dentroDelLimite("vip", req.ip, email, { store: deps.rlStore, ahora }))) return resp(429, { ok: false, error: "demasiadas-solicitudes" });
 
   // 1) El correo primero: aunque el código falle, la persona queda registrada.
-  // 2) Luego el FV20. Si Supabase no responde en cualquiera de los dos, NO se
+  // 2) Luego el código (FV10 del Círculo / FV20 de /vip). Si Supabase no responde en cualquiera de los dos, NO se
   //    inventa un código: 503 claro y el correo va a la cola de respaldo.
   const suscriptor = { email, nombre: nombreReal || null, origen: origenCodigo, metodo: j.metodo || "email" };
   const noDisponible = async (paso, detalle) => {
@@ -126,14 +129,14 @@ export async function procesarVip(req, deps = {}) {
   let correo = false;
   let correos;
   if (env.RESEND_API_KEY || esDryRun(env)) {
-    const datos = { nombre, email, codigo: r.codigo, origen: origenCodigo, hasta: vipCfg.hasta, hastaTexto: vipCfg.hasta ? fechaLegible(vipCfg.hasta) : "" };
+    const datos = { nombre, email, codigo: r.codigo, tipo: r.tipo, origen: origenCodigo, hasta: r.tipo === "FV20" ? vipCfg.hasta : null, hastaTexto: r.tipo === "FV20" && vipCfg.hasta ? fechaLegible(vipCfg.hasta) : "" };
     const s = await enviarCorreos("vip", datos, { env, fetchFn: deps.fetchFn });
     correo = !!(s.cliente && s.cliente.ok);
     if (esDryRun(env)) correos = [s.felipe, s.cliente].filter(Boolean).map((x) => x.correo);
   } else {
     console.error("vip-codigo: falta RESEND_API_KEY; el código se muestra pero no se envía por correo.");
   }
-  const body = { ok: true, codigo: r.codigo, nuevo: r.nuevo, correo };
+  const body = { ok: true, codigo: r.codigo, tipo: r.tipo, pct: r.pct, nuevo: r.nuevo, correo };
   if (correos) { body.dryRun = true; body.correos = correos; }
   return resp(200, body);
 }

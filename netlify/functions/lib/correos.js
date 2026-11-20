@@ -36,7 +36,7 @@
 //    - Sin enlaces en nombre, notas, dirección ni color; límites por IP,
 //      por destinatario y global.
 // ============================================================
-import { CATALOGO, recalcularTotal, configBlackFriday, RE_CODIGO_VIP } from "./catalogo-precios.js";
+import { CATALOGO, recalcularTotal, configBlackFriday, RE_CODIGO_VIP, RE_CODIGO_CIRCULO } from "./catalogo-precios.js";
 
 export const ORIGENES_OK = ["https://felipevergel.com", "https://www.felipevergel.com"];
 
@@ -47,7 +47,7 @@ export const TIPOS = ["pedido", "club"];
 
 const RE_REF = /^FV-\d{10,16}-[A-Z0-9]{1,12}$/;
 const RE_CODIGO = /^FV15-[A-Z0-9]{7}$/;
-const RE_CODIGO_PEDIDO = /^FV(15|20)-[A-Z0-9]{7}$/;
+const RE_CODIGO_PEDIDO = /^FV(10|15|20)-[A-Z0-9]{7}$/;
 // Un solo buzón, sin espacios, comas, punto y coma ni saltos de línea.
 const RE_EMAIL = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 // Enlaces: nadie necesita una URL en su nombre, nota o dirección; un
@@ -303,7 +303,7 @@ export function limpiarPedido(p) {
  * llega, por SKU. Una pieza desconocida rechaza la solicitud.
  * Si el total que vio el cliente difiere, se avisa a Felipe (avisoTotalNavegador).
  */
-export function recalcularPedido(p, env, { vipValido = false } = {}) {
+export function recalcularPedido(p, env, { vipValido = false, circuloValido = false } = {}) {
   const porSku = new Map(Object.entries(CATALOGO).map(([id, x]) => [String(x.sku).toUpperCase(), id]));
   const ids = [];
   for (const i of p.cart) {
@@ -313,9 +313,10 @@ export function recalcularPedido(p, env, { vipValido = false } = {}) {
   }
   const bf = configBlackFriday(env);
   const esVip = RE_CODIGO_VIP.test(p.discountCode || "");
+  const esCirculo = RE_CODIGO_CIRCULO.test(p.discountCode || "");
   // FV15: formato válido = se aplica (igual que la pantalla; Felipe confirma
-  // por WhatsApp). FV20: solo si el almacén VIP lo dio por válido.
-  const r = recalcularTotal(ids.map((id, k) => ({ id, qty: p.cart[k].qty })), p.deliveryMethod, !esVip && !!p.discountCode, bf, { vip: esVip && vipValido });
+  // por WhatsApp). FV20 y FV10: solo si Supabase los dio por válidos.
+  const r = recalcularTotal(ids.map((id, k) => ({ id, qty: p.cart[k].qty })), p.deliveryMethod, !esVip && !esCirculo && !!p.discountCode, bf, { vip: esVip && vipValido, circulo: esCirculo && circuloValido });
   const cart = r.lineas.map((l, k) => ({
     id: l.id, qty: l.qty, sku: l.sku, name: l.nombre, color: p.cart[k].color, price: l.precio, precioLista: l.precioLista
   }));
@@ -523,22 +524,30 @@ function correoClubFelipe(c) {
 }
 
 function correoVipCliente(c) {
-  const asunto = "Tu código personal del 20 %";
+  const esFV10 = c.tipo === "FV10" || /^FV10-/.test(c.codigo || "");
+  const pct = esFV10 ? 10 : 20;
+  const asunto = `Tu código personal del ${pct} %`;
+  const nota = esFV10
+    ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: durante Black Friday el 15&nbsp;% ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
+    : `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20&nbsp;% reemplaza el 15&nbsp;%.`;
+  const notaTxt = esFV10
+    ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: durante Black Friday el 15 % ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
+    : `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20 % reemplaza el 15 %.`;
   const cuerpo =
-    `<p style="font-family:${SANS};font-size:15px;line-height:1.8;color:${C.texto};margin:0 0 24px;">Este es tu código personal para comprar cualquier pieza de la tienda con 20&nbsp;% de descuento sobre el precio de lista:</p>` +
+    `<p style="font-family:${SANS};font-size:15px;line-height:1.8;color:${C.texto};margin:0 0 24px;">Este es tu código personal para comprar cualquier pieza de la tienda con ${pct}&nbsp;% de descuento sobre el precio de lista:</p>` +
     `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;"><tr><td align="center" style="border:2px dashed ${C.rosa};border-radius:16px;background:rgba(243,207,179,0.08);padding:20px 38px;">` +
-    `<div style="font-family:${SANS};font-size:10px;letter-spacing:3px;text-transform:uppercase;color:${C.terracota};font-weight:700;margin-bottom:8px;">Código personal &middot; 20&nbsp;%</div>` +
+    `<div style="font-family:${SANS};font-size:10px;letter-spacing:3px;text-transform:uppercase;color:${C.terracota};font-weight:700;margin-bottom:8px;">Código personal &middot; ${pct}&nbsp;%</div>` +
     `<div style="font-family:${SANS};font-size:28px;letter-spacing:6px;font-weight:700;color:${C.crema};">${esc(c.codigo)}</div>` +
     `<div style="font-family:${SANS};font-size:11px;color:${C.rosa};margin-top:8px;">Un solo uso &middot; Se gasta cuando tu pago es aprobado</div></td></tr></table>` +
-    `<p style="font-family:${SANS};font-size:13px;line-height:1.7;color:${C.suave};margin:0;">Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20&nbsp;% reemplaza el 15&nbsp;%.` +
+    `<p style="font-family:${SANS};font-size:13px;line-height:1.7;color:${C.suave};margin:0;">${nota}` +
     (c.hasta ? ` Vale hasta el ${esc(c.hastaTexto || c.hasta)}.` : "") + `</p>`;
   const texto =
     `Hola ${c.nombre},
 
-Este es tu código personal del 20 % sobre el precio de lista: ${c.codigo}
+Este es tu código personal del ${pct} % sobre el precio de lista: ${c.codigo}
 ` +
     `Un solo uso. Se gasta cuando tu pago es aprobado.
-Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20 % reemplaza el 15 %.
+${notaTxt}
 ` +
     (c.hasta ? `Vale hasta el ${c.hastaTexto || c.hasta}.
 ` : "") +
@@ -551,15 +560,18 @@ Felipe Vergel · Arte en Vidrio
 }
 
 function correoVipFelipe(c) {
-  const asunto = `Nuevo código VIP · ${c.nombre}`;
+  const esFV10 = c.tipo === "FV10" || /^FV10-/.test(c.codigo || "");
+  const etiqueta = esFV10 ? "Nuevo código del Círculo (10 %)" : "Nuevo código VIP";
+  const asunto = `${etiqueta} · ${c.nombre}`;
   const cuerpo =
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">` +
-    filaDato("Nombre", esc(c.nombre)) + filaDato("Correo", esc(c.email)) + filaDato("Código", esc(c.codigo)) +
+    filaDato("Nombre", esc(c.nombre)) + filaDato("Correo", esc(c.email)) + filaDato("Código", esc(c.codigo)) + filaDato("Descuento", esFV10 ? "10 %" : "20 %") +
     filaDato("Desde", c.origen === "circulo" ? "Ventana del Círculo" : "Enlace /vip") + `</table>`;
-  const texto = `Nuevo código VIP (${c.origen === "circulo" ? "Círculo" : "/vip"}).
+  const texto = `${etiqueta} (${c.origen === "circulo" ? "Círculo" : "/vip"}).
 Nombre: ${c.nombre}
 Correo: ${c.email}
 Código: ${c.codigo}
+Descuento: ${esFV10 ? "10 %" : "20 %"}
 `;
   return { rol: "felipe", to: null, subject: asunto, html: envoltura({ asunto, nombre: "Felipe", saludo: false, cta: false, cuerpo }), text: texto, replyToCliente: c.email };
 }
@@ -780,10 +792,16 @@ export async function procesarSolicitud(req, deps = {}) {
       datos = limpiarPedido({ ...guardado, ref: datos.ref });
     } else {
       let vipValido = false;
-      if (RE_CODIGO_VIP.test(datos.discountCode || "") && deps.verificarVip) {
-        try { vipValido = (await deps.verificarVip(datos.discountCode)) === "valido"; } catch { vipValido = false; }
+      let circuloValido = false;
+      const esVipCod = RE_CODIGO_VIP.test(datos.discountCode || "");
+      const esCirculoCod = RE_CODIGO_CIRCULO.test(datos.discountCode || "");
+      if ((esVipCod || esCirculoCod) && deps.verificarVip) {
+        let ok = false;
+        try { ok = (await deps.verificarVip(datos.discountCode)) === "valido"; } catch { ok = false; }
+        vipValido = esVipCod && ok;
+        circuloValido = esCirculoCod && ok;
       }
-      const rc = recalcularPedido(datos, env, { vipValido });
+      const rc = recalcularPedido(datos, env, { vipValido, circuloValido });
       if (!rc.ok) return resp(400, { ok: false, error: rc.error });
       datos = rc.datos;
     }

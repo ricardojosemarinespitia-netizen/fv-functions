@@ -4,7 +4,7 @@
 //  Imita lo que usan las funciones: GET con filtros eq./is./in., POST con
 //  on_conflict + Prefer resolution/return, PATCH con filtros. Aplica las
 //  mismas restricciones que la base real (01_esquema.sql + tablas viejas):
-//   - únicos: suscriptores.email, codigos_descuento.codigo, FV20 por email,
+//   - únicos: suscriptores.email, codigos_descuento.codigo, FV20 y FV10 por email,
 //     clientes.email, pedidos.referencia
 //   - checks: correos en minúsculas, formato y tipo de código
 //   - permisos: service_role SIN UPDATE en pedidos / pedidos_items (403)
@@ -17,7 +17,7 @@ export const CLAVE = "clave-de-prueba-service-role";
 
 const UNICOS = {
   suscriptores: [["email"]],
-  codigos_descuento: [["codigo"], ["email", (f) => f.tipo === "FV20"]],
+  codigos_descuento: [["codigo"], ["email", (f) => f.tipo === "FV20"], ["email", (f) => f.tipo === "FV10"]],
   clientes: [["email"]],
   pedidos: [["referencia"]],
   pedidos_items: []
@@ -36,7 +36,7 @@ function revisar(t, f) {
   if ((t === "suscriptores" || t === "codigos_descuento") && !minus(f.email)) return "check email en minúsculas";
   if (t === "suscriptores" && !["circulo", "vip", "compra", "otro"].includes(f.origen)) return "check origen";
   if (t === "codigos_descuento") {
-    if (!/^FV(15|20)-[A-Z0-9]{7}$/.test(f.codigo)) return "check formato";
+    if (!/^FV(10|15|20)-[A-Z0-9]{7}$/.test(f.codigo)) return "check formato";
     if (f.codigo.slice(0, 4) !== f.tipo) return "check tipo";
   }
   return null;

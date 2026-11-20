@@ -64,7 +64,7 @@ export default async (req) => {
     ? async (ref) => storePedidos.get(ref, { type: "json" }).catch(() => null)
     : null;
 
-  // Pedido por WhatsApp con FV20: el 20 % solo sale en el correo si
+  // Pedido por WhatsApp con FV20 o FV10: el 20 % / 10 % solo sale en el correo si
   // Supabase (codigos_descuento) dice que el código es válido.
   const verificarVip = async (codigo) => (await estadoCodigo(configSupabase(), codigo, { timeoutMs: 3000, reintentos: 1, legado: await abrirLegado() })).estado;
 

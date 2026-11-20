@@ -158,6 +158,29 @@ await prueba("con Black Friday el código no se suma (no aparece como aplicado)"
   assert.ok(cliente.cuerpo.html.includes("$508.300"));
 });
 
+await prueba("FV10 (Círculo) en pedido por WhatsApp: solo si Supabase lo da por válido; sin BF resta 10 %; con BF no suma", async () => {
+  const d = () => { const x = pedidoBase(); x.discountCode = "FV10-ABCD234"; return x; };
+  const cli = (f) => f.llamadas.find((l) => l.cuerpo.to[0] === "ana@example.com");
+  // válido y sin Black Friday: 598.000 - 59.800 (10 %) = 538.200
+  let f = mockFetch();
+  _reiniciarLimites(); await procesarSolicitud(solicitud({ tipo: "pedido", datos: d() }), { env: ENV_SIN_BF, fetchFn: f, verificarVip: async () => "valido" });
+  assert.ok(cli(f).cuerpo.html.includes("FV10-ABCD234") && cli(f).cuerpo.html.includes("-$59.800") && cli(f).cuerpo.html.includes("$538.200"));
+  // usado / no verificable: sin descuento (lista completa)
+  for (const est of ["usado", "sin-verificar", "invalido"]) {
+    f = mockFetch();
+    _reiniciarLimites(); await procesarSolicitud(solicitud({ tipo: "pedido", datos: d() }), { env: ENV_SIN_BF, fetchFn: f, verificarVip: async () => est });
+    assert.ok(!cli(f).cuerpo.html.includes("FV10-ABCD234") && cli(f).cuerpo.html.includes("$598.000"), "estado " + est);
+  }
+  // sin verificador: no se aplica
+  f = mockFetch();
+  _reiniciarLimites(); await procesarSolicitud(solicitud({ tipo: "pedido", datos: d() }), { env: ENV_SIN_BF, fetchFn: f });
+  assert.ok(!cli(f).cuerpo.html.includes("FV10-ABCD234"));
+  // con Black Friday: 15 % público ($508.300), el FV10 no aparece ni suma
+  f = mockFetch();
+  _reiniciarLimites(); await procesarSolicitud(solicitud({ tipo: "pedido", datos: d() }), { env: ENV, fetchFn: f, verificarVip: async () => "valido" });
+  assert.ok(!cli(f).cuerpo.html.includes("FV10-ABCD234") && cli(f).cuerpo.html.includes("$508.300"));
+});
+
 await prueba("pedido guardado por wompi-sign: montos del registro del servidor y correo debe coincidir", async () => {
   const guardado = { ...pedidoBase(), total: 499999, subtotal: 499999, _serverPriced: true };
   const f = mockFetch();

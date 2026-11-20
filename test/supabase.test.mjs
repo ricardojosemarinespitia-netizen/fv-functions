@@ -39,14 +39,14 @@ await prueba("configSupabase: sin variables = null (no hace nada); con variables
   assert.equal(r.ok, false); assert.equal(r.error, "sin-configurar");
 });
 
-await prueba("solicitar: guarda el suscriptor (origen, método, nombre real) y el FV20 en la base", async () => {
+await prueba("solicitar: guarda el suscriptor (origen, método, nombre real) y el FV10 del Círculo en la base", async () => {
   const r = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "  Ana@Example.com ", metodo: "google", web: "" }), { db, env: ENV });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const [s] = SB.db.suscriptores;
   assert.equal(s.email, "ana@example.com"); assert.equal(s.origen, "circulo"); assert.equal(s.metodo, "google");
   assert.equal(s.nombre, null, "sin nombre escrito no se guarda 'coleccionista'");
   const [c] = SB.db.codigos_descuento;
-  assert.equal(c.codigo, r.body.codigo); assert.equal(c.tipo, "FV20"); assert.equal(c.email, "ana@example.com"); assert.equal(c.origen, "circulo"); assert.equal(c.usado, false);
+  assert.equal(c.codigo, r.body.codigo); assert.equal(c.tipo, "FV10"); assert.match(c.codigo, /^FV10-[A-Z0-9]{7}$/); assert.equal(c.email, "ana@example.com"); assert.equal(c.origen, "circulo"); assert.equal(c.usado, false);
 });
 
 await prueba("un FV20 por correo aunque lleguen dos solicitudes a la vez (índice único por correo)", async () => {
@@ -129,6 +129,8 @@ await prueba("registrado: sí para Círculo/VIP, no para solo-comprador o descon
   assert.equal((await reg("comp@example.com")).body.registrado, false);
   assert.equal((await reg("nadie@example.com")).body.registrado, false);
   assert.equal((await reg("solo@example.com")).body.registrado, true);
+  SB.db.codigos_descuento.push({ codigo: "FV10-SOLOCOD", tipo: "FV10", email: "solo10@example.com", usado: false });
+  assert.equal((await reg("solo10@example.com")).body.registrado, true, "un correo con solo FV10 también está en el Círculo");
   assert.equal((await reg("no-es-correo")).status, 400);
   assert.equal((await procesarVip(req({ accion: "registrado", email: "a@b.co", codigo: "x" }), { db, env: ENV })).status, 400);
   assert.equal(await estaRegistrado(db, "circ@example.com"), true);

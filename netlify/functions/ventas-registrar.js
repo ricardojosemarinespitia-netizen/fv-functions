@@ -24,7 +24,7 @@
 // ============================================================
 import { validarPedido, recalcularPedido, dentroDelLimite } from "./lib/correos.js";
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
-import { estadoCodigo, RE_FV20 } from "./lib/vip.js";
+import { estadoCodigo, RE_FV20, RE_FV10 } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
 import { abrirLegado } from "./lib/vip-legado.js";
 
@@ -109,7 +109,9 @@ export async function procesarVenta(req, deps = {}) {
     }
     let vipValido = false;
     if (RE_FV20.test(v.datos.discountCode || "")) vipValido = (await estadoCodigo(db, v.datos.discountCode, { env, legado: deps.legado !== undefined ? deps.legado : await abrirLegado() })).estado === "valido";
-    const rc = recalcularPedido(v.datos, env, { vipValido });
+    let circuloValido = false;
+    if (RE_FV10.test(v.datos.discountCode || "")) circuloValido = (await estadoCodigo(db, v.datos.discountCode, { env, legado: null })).estado === "valido";
+    const rc = recalcularPedido(v.datos, env, { vipValido, circuloValido });
     if (!rc.ok) return resp(400, { ok: false, error: rc.error });
     const pedido = { ...rc.datos, paymentMethod: "whatsapp" };
     const r = await registrarEnSupabase(ref, pedido, null, { db, origen: "whatsapp", estado: "PENDIENTE", fetchFn: deps.fetchFn });

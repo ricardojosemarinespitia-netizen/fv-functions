@@ -3,7 +3,7 @@
 // que intente salir a la red se bloquea.
 import assert from "node:assert/strict";
 import { procesarVip } from "../netlify/functions/lib/vip-http.js";
-import { estadoCodigo, marcarCodigoUsado, generarCodigoVip, RE_FV20 } from "../netlify/functions/lib/vip.js";
+import { estadoCodigo, marcarCodigoUsado, generarCodigoVip, generarCodigoCirculo, RE_FV20, RE_FV10 } from "../netlify/functions/lib/vip.js";
 import { _reiniciarLimites } from "../netlify/functions/lib/correos.js";
 import { iniciarSupabaseFalso } from "./supabase-falso.mjs";
 
@@ -47,12 +47,71 @@ await prueba("un código por correo: pedirlo otra vez (mayúsculas/espacios) dev
   assert.notEqual(c.body.codigo, a.body.codigo);
 });
 
-await prueba("Círculo: origen circulo, nombre opcional -> 'coleccionista'", async () => {
+await prueba("Círculo: origen circulo, nombre opcional -> 'coleccionista'; entrega FV10 (10 %), no FV20", async () => {
   const db = nuevaBase();
   const r = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "c@example.com", web: "" }), { db, env: ENV });
   assert.equal(r.status, 200);
-  assert.equal(r.body.correos[0].subject, "Nuevo código VIP · coleccionista");
-  assert.ok(r.body.correos[0].html.includes("Ventana del C"));
+  assert.match(r.body.codigo, RE_FV10); assert.equal(r.body.tipo, "FV10"); assert.equal(r.body.pct, 10);
+  const [felipe, cliente] = r.body.correos;
+  assert.equal(felipe.subject, "Nuevo código del Círculo (10 %) · coleccionista");
+  assert.ok(felipe.html.includes("Ventana del C") && felipe.html.includes("10 %"));
+  assert.equal(cliente.subject, "Tu código personal del 10 %");
+  assert.ok(cliente.html.includes(r.body.codigo) && cliente.text.includes(r.body.codigo));
+  assert.ok(cliente.html.includes("10&nbsp;%") && !cliente.html.includes("20&nbsp;%") && !cliente.text.includes("20 %"));
+  assert.equal(SB.db.codigos_descuento.length, 1); assert.equal(SB.db.codigos_descuento[0].tipo, "FV10"); assert.equal(SB.db.codigos_descuento[0].origen, "circulo");
+});
+
+await prueba("Círculo: pedirlo otra vez devuelve el MISMO FV10; /vip sigue dando FV20 (20 %)", async () => {
+  const db = nuevaBase();
+  const a = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "d@example.com", web: "" }), { db, env: ENV });
+  const b = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: " D@Example.com", web: "" }), { db, env: ENV, ahora: Date.now() + 1 });
+  assert.equal(b.body.codigo, a.body.codigo); assert.equal(b.body.nuevo, false); assert.equal(b.body.tipo, "FV10");
+  const v = await procesarVip(req(pedir("ana2@example.com")), { db, env: ENV });
+  assert.match(v.body.codigo, RE_FV20); assert.equal(v.body.tipo, "FV20"); assert.equal(v.body.pct, 20);
+  assert.equal(v.body.correos[1].subject, "Tu código personal del 20 %");
+});
+
+await prueba("regla 1: quien ya tiene FV20 y se une al Círculo recibe SU FV20 (no se le baja, no se crea FV10)", async () => {
+  const db = nuevaBase();
+  const a = await procesarVip(req(pedir("vip1@example.com")), { db, env: ENV });
+  const b = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "vip1@example.com", web: "" }), { db, env: ENV, ahora: Date.now() + 1 });
+  assert.equal(b.body.codigo, a.body.codigo); assert.equal(b.body.tipo, "FV20"); assert.equal(b.body.pct, 20); assert.equal(b.body.nuevo, false);
+  assert.equal(b.body.correos[1].subject, "Tu código personal del 20 %");
+  assert.equal(SB.db.codigos_descuento.length, 1);
+});
+
+await prueba("regla 3: quien solo tiene FV10 y entra por /vip recibe un FV20 nuevo; los dos coexisten", async () => {
+  const db = nuevaBase();
+  const c = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "dos@example.com", web: "" }), { db, env: ENV });
+  const v = await procesarVip(req(pedir("dos@example.com")), { db, env: ENV, ahora: Date.now() + 1 });
+  assert.equal(c.body.tipo, "FV10"); assert.equal(v.body.tipo, "FV20"); assert.notEqual(v.body.codigo, c.body.codigo); assert.equal(v.body.nuevo, true);
+  assert.deepEqual(SB.db.codigos_descuento.map((x) => x.tipo).sort(), ["FV10", "FV20"]);
+  // y si vuelve al Círculo, recibe su FV20 (el mejor), no el FV10
+  const c2 = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "dos@example.com", web: "" }), { db, env: ENV, ahora: Date.now() + 2 });
+  assert.equal(c2.body.codigo, v.body.codigo);
+});
+
+await prueba("FV10: un solo FV10 por correo aunque lleguen dos solicitudes a la vez (índice único)", async () => {
+  const db = nuevaBase();
+  const q = () => procesarVip(req({ accion: "solicitar", origen: "circulo", email: "par@example.com", web: "" }), { db, env: ENV });
+  const [x, y] = await Promise.all([q(), q()]);
+  assert.equal(x.status, 200); assert.equal(y.status, 200); assert.equal(x.body.codigo, y.body.codigo);
+  assert.equal(SB.db.codigos_descuento.filter((c) => c.tipo === "FV10").length, 1);
+});
+
+await prueba("verificar FV10: valido -> (pago aprobado) usado; no vence con VIP_HASTA; Círculo no se cierra con VIP_HASTA (/vip sí: 410)", async () => {
+  const db = nuevaBase();
+  const ENV_VENCIDO = { ...ENV, VIP_HASTA: "2020-01-01T00:00:00-05:00" };
+  const c = await procesarVip(req({ accion: "solicitar", origen: "circulo", email: "ven@example.com", web: "" }), { db, env: ENV_VENCIDO });
+  assert.equal(c.status, 200); assert.equal(c.body.tipo, "FV10");
+  assert.ok(!c.body.correos[1].html.includes("Vale hasta"), "el FV10 no menciona vencimiento");
+  const v = await procesarVip(req(pedir("ven2@example.com")), { db, env: ENV_VENCIDO });
+  assert.equal(v.status, 410);
+  const ver = async (cod) => (await procesarVip(req({ accion: "verificar", codigo: cod }), { db, env: ENV_VENCIDO })).body.estado;
+  assert.equal(await ver(c.body.codigo), "valido");
+  assert.equal((await marcarCodigoUsado(db, c.body.codigo, "FV-1795000000000-ABCDE")).ok, true);
+  assert.equal(await ver(c.body.codigo), "usado");
+  assert.equal(await ver("FV10-NOEXIST"), "invalido");
 });
 
 await prueba("rechaza: honeypot lleno, sin nombre (/vip), correo malo, enlaces, campos extra, origen ajeno", async () => {
@@ -120,8 +179,9 @@ await prueba("sin RESEND_API_KEY ni DRY_RUN: el código igual se crea y se muest
   } finally { console.error = o; }
 });
 
-await prueba("generador: formato FV20, alfabeto sin 0/O/1/I/L", async () => {
+await prueba("generador: formato FV20 y FV10, alfabeto sin 0/O/1/I/L", async () => {
   for (let i = 0; i < 300; i++) { const c = generarCodigoVip(); assert.match(c, RE_FV20); assert.ok(!/[01OIL]/.test(c.slice(5))); }
+  for (let i = 0; i < 300; i++) { const c = generarCodigoCirculo(); assert.match(c, RE_FV10); assert.ok(!/[01OIL]/.test(c.slice(5))); }
 });
 
 await SB.cerrar();

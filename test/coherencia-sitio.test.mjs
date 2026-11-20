@@ -40,4 +40,12 @@ assert.ok(!/action=checkCode/.test(ci), "customer-info sigue verificando FV15 en
 assert.ok(/accion:"registrado"/.test(index), "el Círculo no consulta 'registrado' en vip-codigo");
 assert.ok(/pedido:datosPedido\(order\)/.test(leer("checkout.html")), "checkout no manda el pedido de WhatsApp a ventas-registrar");
 assert.deepEqual(ORIGENES_OK, ["https://felipevergel.com", "https://www.felipevergel.com"]);
+// 3) Círculo = FV10 (10 %); el 20 % queda solo para /vip. El sitio y el servidor hablan igual.
+const prod = leer("products.js");
+for (const [f, t] of [["products.js", prod], ["customer-info.html", ci], ["checkout.html", leer("checkout.html")]]) {
+  assert.ok(/FV10-\[A-Z0-9\]\{7\}/.test(t), f + " no reconoce el formato FV10");
+}
+assert.ok(/tipo==="circulo"/.test(prod) && /codigoMenorQueBF/.test(prod), "products.js sin la regla del FV10 (10 % / no suma con Black Friday)");
+assert.ok(/10&#8239;% de descuento|>10<span class="club-cover-pct">/.test(index), "el popup del Círculo no muestra el 10 %");
+assert.ok(!/Tu código personal del 20&#8239;%<\/p>/.test(index), "el popup del Círculo sigue prometiendo 20 % por defecto");
 console.log("coherencia sitio/servidor OK");

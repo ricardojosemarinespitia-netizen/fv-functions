@@ -22,7 +22,7 @@
 // ============================================================
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { recalcularTotal, RE_CODIGO, RE_CODIGO_VIP, configBlackFriday } from "./lib/catalogo-precios.js";
+import { recalcularTotal, RE_CODIGO, RE_CODIGO_VIP, RE_CODIGO_CIRCULO, configBlackFriday } from "./lib/catalogo-precios.js";
 import { estadoCodigo } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
 import { abrirLegado } from "./lib/vip-legado.js";
@@ -58,7 +58,7 @@ function cabeceras(origen) {
 }
 
 /**
- * Verifica un código (FV15 o FV20) en Supabase (tabla codigos_descuento).
+ * Verifica un código (FV10, FV15 o FV20) en Supabase (tabla codigos_descuento).
  * Devuelve "valido" | "usado" | "vencido" | "invalido" | "sin-verificar".
  * FALLA CERRADO: solo "valido" da descuento. Antes, con el Apps Script del
  * Club, un FV15 "sin-verificar" se aplicaba igual; ahora no: si la base no
@@ -111,7 +111,7 @@ export default async (req) => {
   }
 
   // --- Descuento: solo si Supabase confirma que el codigo existe y no se ha
-  // usado (FV15 o FV20). Si no se puede verificar, NO se aplica.
+  // usado (FV10, FV15 o FV20). Si no se puede verificar, NO se aplica.
   const codigo = String((body.discountCode || "")).trim().toUpperCase();
   // Un solo descuento por pedido (regla de Ricardo). La hora la pone ESTE
   // servidor: antes de BF_DESDE no hay Black Friday aunque el navegador crea
@@ -119,12 +119,22 @@ export default async (req) => {
   const bf = configBlackFriday();
   let descuentoValido = false;
   let vip = false;
+  let circulo = false;
   let veredicto = "sin-codigo";
   if (codigo && RE_CODIGO_VIP.test(codigo)) {
     // FV20 (Supabase). Si no se puede verificar NO se aplica: el checkout ve
     // un total mayor y no abre Wompi.
     veredicto = await verificarCodigo(codigo);
     vip = veredicto === "valido";
+  } else if (codigo && RE_CODIGO_CIRCULO.test(codigo) && bf.activo) {
+    // FV10 (Circulo) durante Black Friday: el 15 % publico ya es mayor. Se
+    // acepta, no resta nada, NO se consulta a la base y NO se marca como usado.
+    veredicto = "menor-que-black-friday";
+  } else if (codigo && RE_CODIGO_CIRCULO.test(codigo)) {
+    // FV10 fuera de Black Friday: 10 % sobre lista, solo si Supabase lo da por
+    // valido y sin usar. Si no se puede verificar NO se aplica.
+    veredicto = await verificarCodigo(codigo);
+    circulo = veredicto === "valido";
   } else if (codigo && RE_CODIGO.test(codigo) && bf.activo && !bf.acumulaCodigo) {
     // FV15 durante Black Friday: da el mismo 15 % que ya tienen los precios.
     // No se consulta al Club (ahorra 2,5 s con Wompi en blanco), no resta
@@ -137,7 +147,7 @@ export default async (req) => {
     veredicto = "formato-invalido";
   }
 
-  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido, bf, { vip });
+  const r = recalcularTotal(items, body.deliveryMethod, descuentoValido, bf, { vip, circulo });
   // Solo queda guardado (y se marca usado al aprobarse) el codigo que de
   // verdad dio el descuento cobrado.
   const codigoAplicado = r.descuento > 0 ? codigo : null;

@@ -27,7 +27,7 @@ import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 import { enviarCorreos, limpiarPedido } from "./lib/correos.js";
-import { RE_FV20, RE_FV15, marcarCodigoUsado } from "./lib/vip.js";
+import { RE_FV20, RE_FV15, RE_FV10, marcarCodigoUsado } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
 import { abrirLegado } from "./lib/vip-legado.js";
 
@@ -168,14 +168,14 @@ export default async (req) => {
     return new Response(`Sin pedido pendiente para ${ref}`, { status: 200 });
   }
 
-  // 3.5) Código de descuento (FV20 o FV15): se gasta SOLO aquí, con el pago
+  // 3.5) Código de descuento (FV20, FV15 o FV10): se gasta SOLO aquí, con el pago
   //      APROBADO por Wompi, y solo si fue el código que dio el descuento
   //      cobrado (wompi-sign guarda discountCode únicamente en ese caso). Va
   //      ANTES de la idempotencia: si el navegador ya marcó el pedido como
   //      "done", el código igual tiene que quedar usado. Es idempotente
   //      (Supabase: codigos_descuento, filtro usado=false).
   const cod = String(pedido.discountCode || "");
-  if (pedido._serverPriced && (RE_FV20.test(cod) || RE_FV15.test(cod)) && Number(pedido.discountAmount) > 0) {
+  if (pedido._serverPriced && (RE_FV20.test(cod) || RE_FV15.test(cod) || RE_FV10.test(cod)) && Number(pedido.discountAmount) > 0) {
     try {
       const rv = await marcarCodigoUsado(configSupabase(), cod, ref, { legado: await abrirLegado() });
       if (!rv.ok) console.error("wompi-webhook: no se pudo marcar el código (revisar a mano en codigos_descuento):", cod, ref, rv.motivo, rv.error || "");
