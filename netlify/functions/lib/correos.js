@@ -576,15 +576,18 @@ export function construirCorreos(tipo, datos, opts = {}) {
 
 /** Cuerpo exacto que se manda a la API de Resend (lo devuelve también el modo de prueba). */
 export function cuerpoResend(correo, { from, emailFelipe }) {
-  const para = correo.rol === "felipe" ? emailFelipe : correo.to;
+  // EMAIL_FELIPE puede traer varias direcciones separadas por coma (el aviso llega a todas).
+  const avisos = String(emailFelipe || "").split(/[,;\s]+/).filter((d) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d));
+  const principal = avisos[0] || emailFelipe;
+  const para = correo.rol === "felipe" ? (avisos.length ? avisos : [emailFelipe]) : [correo.to];
   return {
     from,
-    to: [para],
+    to: para,
     subject: correo.subject,
     html: correo.html,
     text: correo.text,
     // Al cliente le responde Felipe; a Felipe le responde el cliente.
-    reply_to: correo.rol === "felipe" ? correo.replyToCliente || emailFelipe : emailFelipe
+    reply_to: correo.rol === "felipe" ? correo.replyToCliente || principal : principal
   };
 }
 
