@@ -210,7 +210,23 @@ try {
   assert.deepEqual(bloqueadas.map((u) => new URL(u).host), ["docs.google.com"], "respaldo: un envío a Google Forms");
   SB.modo = "ok";
 
-  console.log("OK e2e: firma, guardado, enviar-correo, webhook firmado e idempotente, inicio de BF por hora, FV20 completo (rechazado no gasta, aprobado gasta, reuso sin descuento, reemplaza BF), FV15 en BF no se gasta, FV15 histórico validado y gastado en Supabase, pedidos y suscriptores en Supabase, Supabase caído = sin descuento + respaldo en Forms.");
+  // 12) Migración perezosa: FV20 pedido en /vip con el servidor ANTERIOR (solo en Blobs "vip-codigos")
+  const M = globalThis.__BLOBS__;
+  const shaE = (e) => crypto.createHash("sha256").update(e).digest("hex");
+  M.set("vip-codigos/codigo:FV20-BLOBSAA", JSON.stringify({ codigo: "FV20-BLOBSAA", email: "blob@example.com", nombre: "Blob", origen: "vip", creado: "2026-11-19T21:25:00.000Z", usado: false }));
+  M.set("vip-codigos/correo:" + shaE("blob@example.com"), JSON.stringify({ codigo: "FV20-BLOBSAA" }));
+  const refB = "FV-1795000000050-BLOBX";
+  const fb = await (await sign(req("wompi-sign", { ref: refB, items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV20-BLOBSAA" }))).json();
+  assert.equal(fb.resumen.veredictoCodigo, "valido"); assert.equal(fb.resumen.descuento, 59800);
+  assert.equal(SB.db.codigos_descuento.find((c) => c.codigo === "FV20-BLOBSAA").creado_en, "2026-11-19T21:25:00.000Z");
+  await save(req("save-pending", { ref: refB, fullName: "Blob", email: "blob@example.com", deliveryMethod: "bucaramanga", paymentMethod: "pse", cart: [{ id: "lampara-caribe-brisa", qty: 1, price: 299000, name: "Lámpara Caribe Brisa", color: "Azul" }] }));
+  assert.equal((await hook(firmarEvento("tx-b", "APPROVED", refB, fb.amountInCents))).status, 200);
+  assert.equal(SB.db.codigos_descuento.find((c) => c.codigo === "FV20-BLOBSAA").referencia_pedido, refB);
+  const vb = await (await vipFn(req("vip-codigo", { accion: "solicitar", origen: "vip", nombre: "Blob", email: "blob@example.com", web: "" }))).json();
+  assert.equal(vb.codigo, "FV20-BLOBSAA", "pedirlo otra vez devuelve el mismo código");
+  assert.equal(JSON.parse(M.get("vip-codigos/codigo:FV20-BLOBSAA")).usado, false, "Blobs no se escribe");
+
+  console.log("OK e2e (+ migración perezosa desde Blobs): firma, guardado, enviar-correo, webhook firmado e idempotente, inicio de BF por hora, FV20 completo (rechazado no gasta, aprobado gasta, reuso sin descuento, reemplaza BF), FV15 en BF no se gasta, FV15 histórico validado y gastado en Supabase, pedidos y suscriptores en Supabase, Supabase caído = sin descuento + respaldo en Forms.");
 } finally {
   limpiar();
   await SB.cerrar();

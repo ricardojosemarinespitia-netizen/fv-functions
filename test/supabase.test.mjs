@@ -3,6 +3,7 @@
 // restricciones que la real. Cubre: suscriptores, FV20/FV15, "registrado",
 // fallas de Supabase (caído / lento), pedidos del webhook y de WhatsApp.
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { procesarVip } from "../netlify/functions/lib/vip-http.js";
 import { estadoCodigo, marcarCodigoUsado, obtenerOCrearCodigo, guardarSuscriptor, estaRegistrado } from "../netlify/functions/lib/vip.js";
 import { registrarEnSupabase } from "../netlify/functions/lib/supabase-pedidos.js";
@@ -11,6 +12,7 @@ import { sbFetch, configSupabase } from "../netlify/functions/lib/supabase-rest.
 import { _reiniciarLimites } from "../netlify/functions/lib/correos.js";
 import { iniciarSupabaseFalso } from "./supabase-falso.mjs";
 
+const RE_FV20_T = /^FV20-[A-Z0-9]{7}$/;
 const fetchReal = globalThis.fetch;
 const salidas = [];
 globalThis.fetch = async (url, init) => {
@@ -221,6 +223,100 @@ await prueba("ventas-registrar (formato viejo del sitio actual): WhatsApp a Supa
   assert.equal(p.origen, "whatsapp"); assert.equal(p.total, 310500); assert.equal(p.payload_raw._importesSinVerificar, true);
   assert.equal(SB.db.pedidos_items[0].nombre, "Florero Ondas"); assert.equal(SB.db.pedidos_items[0].color, "Gris");
   assert.ok(salidas.some((u) => u.startsWith("https://script.google.com/")));
+});
+
+// ── Migración perezosa desde Netlify Blobs ("vip-codigos", formato de la versión anterior) ──
+const sha = (e) => crypto.createHash("sha256").update(String(e).trim().toLowerCase()).digest("hex");
+const blobsViejos = (regs, { falla = false, cuelga = false } = {}) => {
+  const m = new Map();
+  for (const r of regs) { m.set("codigo:" + r.codigo, JSON.stringify(r)); m.set("correo:" + sha(r.email), JSON.stringify({ codigo: r.codigo })); }
+  return {
+    m,
+    async get(k) {
+      if (falla) throw new Error("blobs caído (simulado)");
+      if (cuelga) return new Promise(() => {});
+      return m.has(k) ? JSON.parse(m.get(k)) : null;
+    },
+    async setJSON() { throw new Error("el legado NUNCA se escribe"); },
+    async delete() { throw new Error("el legado NUNCA se borra"); }
+  };
+};
+const VIEJO = { codigo: "FV20-VIEJOAB", email: "Vieja@Ejemplo.co ", nombre: "Vieja", origen: "vip", creado: "2026-11-19T21:30:00.000Z", usado: false };
+const VIEJO_USADO = { codigo: "FV20-USADOAB", email: "gasto@ejemplo.co", nombre: "coleccionista", origen: "circulo", creado: "2026-11-19T21:40:00.000Z", usado: true, usadoRef: "FV-1795100000000-PAGOX", usadoEn: "2026-11-19T22:00:00.000Z" };
+
+await prueba("legado: verificar un FV20 que solo está en Blobs -> válido, copiado a Supabase con fecha original; repetir no duplica", async () => {
+  const legado = blobsViejos([VIEJO]);
+  const ver = async () => (await procesarVip(req({ accion: "verificar", codigo: "fv20-viejoab" }), { db, env: ENV, legado })).body.estado;
+  assert.equal(await ver(), "valido");
+  const [c] = SB.db.codigos_descuento;
+  assert.equal(c.codigo, "FV20-VIEJOAB"); assert.equal(c.email, "vieja@ejemplo.co"); assert.equal(c.creado_en, VIEJO.creado); assert.equal(c.usado, false); assert.equal(c.origen, "vip");
+  const [s] = SB.db.suscriptores;
+  assert.equal(s.email, "vieja@ejemplo.co"); assert.equal(s.origen, "vip"); assert.equal(s.creado_en, VIEJO.creado); assert.equal(s.nombre, "Vieja");
+  assert.equal(await ver(), "valido");
+  assert.equal(SB.db.codigos_descuento.length, 1); assert.equal(SB.db.suscriptores.length, 1);
+});
+
+await prueba("legado: un FV20 ya gastado en Blobs llega como 'usado' (con su referencia) y no da descuento", async () => {
+  const legado = blobsViejos([VIEJO_USADO]);
+  assert.equal((await estadoCodigo(db, "FV20-USADOAB", { legado })).estado, "usado");
+  const c = SB.db.codigos_descuento[0];
+  assert.equal(c.usado, true); assert.equal(c.referencia_pedido, "FV-1795100000000-PAGOX"); assert.equal(c.usado_en, VIEJO_USADO.usadoEn);
+  assert.equal(SB.db.suscriptores[0].nombre, null, "'coleccionista' no se guarda como nombre");
+  assert.equal(SB.db.suscriptores[0].origen, "circulo");
+});
+
+await prueba("legado: solicitar con un correo que ya tenía FV20 en Blobs devuelve ESE código (no crea otro)", async () => {
+  const legado = blobsViejos([VIEJO]);
+  const r = await procesarVip(req({ accion: "solicitar", origen: "vip", nombre: "Vieja", email: "VIEJA@ejemplo.co", web: "" }), { db, env: ENV, legado });
+  assert.equal(r.status, 200); assert.equal(r.body.codigo, "FV20-VIEJOAB"); assert.equal(r.body.nuevo, false);
+  assert.equal(SB.db.codigos_descuento.length, 1);
+});
+
+await prueba("legado: 'registrado' es sí para un correo que solo estaba en Blobs (y lo copia)", async () => {
+  const legado = blobsViejos([VIEJO]);
+  const r = await procesarVip(req({ accion: "registrado", email: "vieja@ejemplo.co" }), { db, env: ENV, legado });
+  assert.deepEqual(r.body, { ok: true, registrado: true });
+  assert.equal(SB.db.codigos_descuento[0].codigo, "FV20-VIEJOAB");
+  assert.equal((await procesarVip(req({ accion: "registrado", email: "nadie@ejemplo.co" }), { db, env: ENV, legado })).body.registrado, false);
+});
+
+await prueba("legado: el webhook marca usado un FV20 que solo estaba en Blobs (pedido firmado por el servidor viejo)", async () => {
+  const legado = blobsViejos([VIEJO]);
+  const r = await marcarCodigoUsado(db, "FV20-VIEJOAB", "FV-1795100000001-APROB", { legado });
+  assert.equal(r.ok, true); assert.equal(r.migrado, true);
+  const c = SB.db.codigos_descuento[0];
+  assert.equal(c.usado, true); assert.equal(c.referencia_pedido, "FV-1795100000001-APROB");
+  const r2 = await marcarCodigoUsado(db, "FV20-VIEJOAB", "FV-1795100000002-OTRAX", { legado });
+  assert.equal(r2.yaEstaba, true); assert.equal(r2.usadoRef, "FV-1795100000001-APROB");
+});
+
+await prueba("legado caído, colgado o inexistente: se ignora y todo sigue como sin legado", async () => {
+  for (const legado of [blobsViejos([VIEJO], { falla: true }), blobsViejos([VIEJO], { cuelga: true }), null]) {
+    limpiar();
+    const t0 = Date.now();
+    assert.equal((await estadoCodigo(db, "FV20-VIEJOAB", { legado })).estado, "invalido");
+    assert.ok(Date.now() - t0 < 2500, "no se cuelga esperando Blobs");
+    const r = await procesarVip(req({ accion: "solicitar", origen: "vip", nombre: "Vieja", email: "vieja@ejemplo.co", web: "" }), { db, env: ENV, legado });
+    assert.equal(r.status, 200); assert.match(r.body.codigo, RE_FV20_T);
+    assert.equal((await procesarVip(req({ accion: "registrado", email: "otro@ejemplo.co" }), { db, env: ENV, legado })).body.registrado, false);
+  }
+});
+
+await prueba("legado seguro: si Supabase no deja guardar el código viejo -> 'sin-verificar' (sin descuento); índice cruzado se ignora", async () => {
+  // El correo ya tiene OTRO FV20 en Supabase: el viejo choca con el índice único -> no se copia.
+  SB.db.codigos_descuento.push({ codigo: "FV20-NUEVOZZ", tipo: "FV20", email: "vieja@ejemplo.co", usado: false });
+  assert.equal((await estadoCodigo(db, "FV20-VIEJOAB", { legado: blobsViejos([VIEJO]) })).estado, "sin-verificar");
+  assert.ok(!SB.db.codigos_descuento.some((c) => c.codigo === "FV20-VIEJOAB"));
+  // Índice de correo que apunta al código de OTRA persona: no se entrega.
+  limpiar();
+  const legado = blobsViejos([VIEJO]);
+  legado.m.set("correo:" + sha("intruso@ejemplo.co"), JSON.stringify({ codigo: "FV20-VIEJOAB" }));
+  const r = await procesarVip(req({ accion: "solicitar", origen: "vip", nombre: "X", email: "intruso@ejemplo.co", web: "" }), { db, env: ENV, legado });
+  assert.notEqual(r.body.codigo, "FV20-VIEJOAB");
+  // Supabase caído durante la copia -> sin-verificar
+  limpiar();
+  SB.modo = "caido";
+  assert.equal((await estadoCodigo(db, "FV20-VIEJOAB", { legado: blobsViejos([VIEJO]) })).estado, "sin-verificar");
 });
 
 await SB.cerrar();

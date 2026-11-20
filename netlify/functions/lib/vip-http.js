@@ -35,7 +35,8 @@ function fechaLegible(iso) {
 
 /**
  * @param {{metodo, origen, ip, cuerpo}} req
- * @param {{db, rlStore?, env?, fetchFn?, ahora?, rnd?, guardarPendiente?}} deps
+ * @param {{db, rlStore?, env?, fetchFn?, ahora?, rnd?, guardarPendiente?, legado?}} deps
+ *   legado = almacén Blobs viejo "vip-codigos" (migración perezosa, lib/vip-legado.js)
  *   db = configSupabase() · guardarPendiente(datos) = cola de respaldo si Supabase cae
  */
 export async function procesarVip(req, deps = {}) {
@@ -56,7 +57,7 @@ export async function procesarVip(req, deps = {}) {
   if (j.accion === "verificar") {
     if (Object.keys(j).some((k) => !["accion", "codigo"].includes(k))) return resp(400, { ok: false, error: "campos-no-permitidos" });
     if (!(await dentroDelLimite("vipVerificar", req.ip, "-", { store: deps.rlStore, ahora }))) return resp(429, { ok: false, error: "demasiadas-solicitudes" });
-    const r = await estadoCodigo(deps.db, j.codigo, { env, ahora, timeoutMs: 3000, reintentos: 1 });
+    const r = await estadoCodigo(deps.db, j.codigo, { env, ahora, timeoutMs: 3000, reintentos: 1, legado: deps.legado });
     return resp(200, { ok: true, estado: r.estado });
   }
 
@@ -65,7 +66,7 @@ export async function procesarVip(req, deps = {}) {
     const em = typeof j.email === "string" ? j.email.trim() : "";
     if (em.length > 120 || !RE_EMAIL.test(em)) return resp(400, { ok: false, error: "datos-invalidos", detalle: ["email: correo inválido"] });
     if (!(await dentroDelLimite("vipVerificar", req.ip, em, { store: deps.rlStore, ahora }))) return resp(429, { ok: false, error: "demasiadas-solicitudes" });
-    const reg = await estaRegistrado(deps.db, em);
+    const reg = await estaRegistrado(deps.db, em, { legado: deps.legado });
     if (reg == null) return resp(503, { ok: false, error: "no-disponible" });
     return resp(200, { ok: true, registrado: reg });
   }
@@ -116,7 +117,7 @@ export async function procesarVip(req, deps = {}) {
 
   let r;
   try {
-    r = await obtenerOCrearCodigo(deps.db, { email, origen: origenCodigo }, { ahora, rnd: deps.rnd });
+    r = await obtenerOCrearCodigo(deps.db, { email, origen: origenCodigo }, { ahora, rnd: deps.rnd, legado: deps.legado });
   } catch (e) {
     return noDisponible("codigo", e && e.message);
   }

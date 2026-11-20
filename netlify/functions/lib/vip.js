@@ -20,6 +20,10 @@
 // ============================================================
 import crypto from "node:crypto";
 import { sbFetch, filtro } from "./supabase-rest.js";
+import { legadoPorCodigo, legadoPorCorreo, importarLegado } from "./vip-legado.js";
+//  `legado` (opcional en todas las funciones) = almacén viejo de Netlify Blobs
+//  "vip-codigos". Si un FV20 o un correo no está en Supabase se busca allí y
+//  se copia (ver lib/vip-legado.js). Sin `legado`, todo funciona igual.
 
 export const RE_FV20 = /^FV20-[A-Z0-9]{7}$/;
 export const RE_FV15 = /^FV15-[A-Z0-9]{7}$/;
@@ -51,13 +55,24 @@ const CAMPOS = "codigo,tipo,email,usado,usado_en,referencia_pedido,creado_en";
  * Estado de un código FV20 o FV15. Nunca lanza.
  * @returns {Promise<{estado:"valido"|"usado"|"vencido"|"invalido"|"sin-verificar", registro?:object}>}
  */
-export async function estadoCodigo(db, codigo, { env, ahora = Date.now(), timeoutMs, reintentos, fetchFn } = {}) {
+export async function estadoCodigo(db, codigo, { env, ahora = Date.now(), timeoutMs, reintentos, fetchFn, legado } = {}) {
   const c = normalizarCodigo(codigo);
   if (!RE_FV20.test(c) && !RE_FV15.test(c)) return { estado: "invalido" };
   if (!db) return { estado: "sin-verificar" };
-  const r = await sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { timeoutMs, reintentos, fetchFn });
+  const leerSb = () => sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { timeoutMs, reintentos, fetchFn });
+  let r = await leerSb();
   if (!r.ok || !Array.isArray(r.datos)) return { estado: "sin-verificar" };
-  const reg = r.datos[0];
+  let reg = r.datos[0];
+  if (!reg && legado && RE_FV20.test(c)) {
+    // Migración perezosa: FV20 emitido cuando los códigos vivían en Blobs.
+    const viejo = await legadoPorCodigo(legado, c);
+    if (viejo) {
+      if (!(await importarLegado(db, viejo, { fetchFn }))) return { estado: "sin-verificar" };
+      r = await leerSb();
+      if (!r.ok || !Array.isArray(r.datos) || !r.datos[0]) return { estado: "sin-verificar" };
+      reg = r.datos[0];
+    }
+  }
   if (!reg) return { estado: "invalido" };
   if (reg.usado) return { estado: "usado", registro: reg };
   if (reg.tipo === "FV20") {
@@ -82,11 +97,19 @@ async function fv20DeCorreo(db, email, fetchFn) {
  * Devuelve el FV20 del correo (lo crea si no existe). Lanza SupabaseNoDisponible
  * si la base no responde: nunca inventa un código que no quedó guardado.
  */
-export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.now(), rnd, fetchFn } = {}) {
+export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.now(), rnd, fetchFn, legado } = {}) {
   if (!db) throw new SupabaseNoDisponible("sin-configurar");
   const e = normalizarEmail(email);
   const previo = await fv20DeCorreo(db, e, fetchFn);
   if (previo) return { codigo: previo.codigo, nuevo: false, registro: previo };
+  if (legado) {
+    // Migración perezosa: si este correo ya tenía su FV20 en Blobs, es ESE.
+    const viejo = await legadoPorCorreo(legado, e);
+    if (viejo && (await importarLegado(db, viejo, { fetchFn }))) {
+      const ya = await fv20DeCorreo(db, e, fetchFn);
+      if (ya) return { codigo: ya.codigo, nuevo: false, registro: ya };
+    }
+  }
   for (let i = 0; i < 5; i++) {
     const registro = { codigo: generarCodigoVip(rnd), tipo: "FV20", email: e, origen: origen || "vip", creado_en: new Date(ahora).toISOString(), usado: false };
     const r = await sbFetch(db, T, { method: "POST", body: registro, prefer: "return=representation", fetchFn });
@@ -108,20 +131,32 @@ export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.
  * pago APROBADO. La condición usado=false va en el filtro: dos webhooks a la
  * vez no pueden pisarse la referencia.
  */
-export async function marcarCodigoUsado(db, codigo, ref, { ahora = Date.now(), fetchFn } = {}) {
+export async function marcarCodigoUsado(db, codigo, ref, { ahora = Date.now(), fetchFn, legado } = {}) {
   const c = normalizarCodigo(codigo);
   if (!db) return { ok: false, motivo: "sin-configurar" };
-  const r = await sbFetch(db, `${T}?codigo=eq.${filtro(c)}&usado=is.false`, {
+  const marcar = () => sbFetch(db, `${T}?codigo=eq.${filtro(c)}&usado=is.false`, {
     method: "PATCH",
     body: { usado: true, usado_en: new Date(ahora).toISOString(), referencia_pedido: ref || null },
     prefer: "return=representation",
     fetchFn
   });
+  let r = await marcar();
   if (!r.ok) return { ok: false, motivo: "supabase-no-disponible", error: r.error };
   if (Array.isArray(r.datos) && r.datos.length) return { ok: true };
-  const g = await sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { fetchFn });
+  let g = await sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { fetchFn });
   if (!g.ok || !Array.isArray(g.datos)) return { ok: false, motivo: "supabase-no-disponible", error: g.error };
-  const reg = g.datos[0];
+  let reg = g.datos[0];
+  if (!reg && legado && RE_FV20.test(c)) {
+    // Pedido firmado por el servidor anterior (código en Blobs) cuyo pago se
+    // aprueba ya con este: se copia el código y se marca aquí.
+    const viejo = await legadoPorCodigo(legado, c);
+    if (viejo && (await importarLegado(db, viejo, { fetchFn }))) {
+      r = await marcar();
+      if (r.ok && Array.isArray(r.datos) && r.datos.length) return { ok: true, migrado: true };
+      g = await sbFetch(db, `${T}?codigo=eq.${filtro(c)}&select=${CAMPOS}`, { fetchFn });
+      reg = g.ok && Array.isArray(g.datos) ? g.datos[0] : null;
+    }
+  }
   if (!reg) return { ok: false, motivo: "no-existe" };
   return { ok: true, yaEstaba: true, usadoRef: reg.referencia_pedido };
 }
@@ -152,7 +187,17 @@ export async function guardarSuscriptor(db, { email, nombre, origen, metodo }, {
  * Apps Script). Solo dice sí/no: nunca devuelve el código.
  * @returns {Promise<boolean|null>} null = no se pudo consultar
  */
-export async function estaRegistrado(db, email, { fetchFn } = {}) {
+export async function estaRegistrado(db, email, { fetchFn, legado } = {}) {
+  const r = await estaRegistradoSb(db, email, { fetchFn });
+  if (r !== false || !legado) return r;
+  const viejo = await legadoPorCorreo(legado, normalizarEmail(email));
+  if (!viejo) return false;
+  // Estaba en Blobs: se copia (si falla la copia, igual SÍ está registrado).
+  await importarLegado(db, viejo, { fetchFn });
+  return true;
+}
+
+async function estaRegistradoSb(db, email, { fetchFn } = {}) {
   if (!db) return null;
   const e = normalizarEmail(email);
   const [s, c] = await Promise.all([

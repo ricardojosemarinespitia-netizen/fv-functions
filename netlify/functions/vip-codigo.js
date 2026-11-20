@@ -16,6 +16,7 @@
 import crypto from "node:crypto";
 import { procesarVip } from "./lib/vip-http.js";
 import { configSupabase } from "./lib/supabase-rest.js";
+import { abrirLegado } from "./lib/vip-legado.js";
 
 async function abrirStore(nombre) {
   try {
@@ -40,6 +41,6 @@ export default async (req) => {
     if (!cola) throw new Error("sin almacén de respaldo");
     await cola.setJSON(`suscriptor/${new Date().toISOString()}-${crypto.randomBytes(3).toString("hex")}`, datos);
   };
-  const r = await procesarVip({ metodo, origen, ip, cuerpo }, { db: configSupabase(), rlStore, guardarPendiente });
+  const r = await procesarVip({ metodo, origen, ip, cuerpo }, { db: configSupabase(), rlStore, guardarPendiente, legado: metodo === "POST" ? await abrirLegado() : null });
   return new Response(r.body ? JSON.stringify(r.body) : null, { status: r.status, headers: r.headers });
 };

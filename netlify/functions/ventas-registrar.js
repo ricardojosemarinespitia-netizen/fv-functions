@@ -26,6 +26,7 @@ import { validarPedido, recalcularPedido, dentroDelLimite } from "./lib/correos.
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 import { estadoCodigo, RE_FV20 } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
+import { abrirLegado } from "./lib/vip-legado.js";
 
 // Hoja "Ventas" (Apps Script "PAGINA WEB"): SOLO respaldo.
 const VENTAS_API = "https://script.google.com/macros/s/AKfycbz9BVbko_lCUMGsSHmSTn8Pu3Kd9L3LFSB6uhaqQZNn6Qi7iK4Hs5bcD3GoR6EBwYc8Jw/exec";
@@ -107,7 +108,7 @@ export async function procesarVenta(req, deps = {}) {
       return resp(429, { ok: false, error: "demasiadas-solicitudes" });
     }
     let vipValido = false;
-    if (RE_FV20.test(v.datos.discountCode || "")) vipValido = (await estadoCodigo(db, v.datos.discountCode, { env })).estado === "valido";
+    if (RE_FV20.test(v.datos.discountCode || "")) vipValido = (await estadoCodigo(db, v.datos.discountCode, { env, legado: deps.legado !== undefined ? deps.legado : await abrirLegado() })).estado === "valido";
     const rc = recalcularPedido(v.datos, env, { vipValido });
     if (!rc.ok) return resp(400, { ok: false, error: rc.error });
     const pedido = { ...rc.datos, paymentMethod: "whatsapp" };

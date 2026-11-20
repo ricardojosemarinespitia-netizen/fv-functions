@@ -25,6 +25,7 @@ import { getStore } from "@netlify/blobs";
 import { recalcularTotal, RE_CODIGO, RE_CODIGO_VIP, configBlackFriday } from "./lib/catalogo-precios.js";
 import { estadoCodigo } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
+import { abrirLegado } from "./lib/vip-legado.js";
 
 // Origenes autorizados a pedir una firma. No es la barrera de seguridad
 // (esa es el recalculo del monto), pero evita que la funcion se use desde
@@ -67,7 +68,7 @@ function cabeceras(origen) {
  * Wompi abierta en blanco, y el checkout corta esta llamada a los 4 s.
  */
 async function verificarCodigo(code) {
-  return (await estadoCodigo(configSupabase(), code, { timeoutMs: 2500, reintentos: 0 })).estado;
+  return (await estadoCodigo(configSupabase(), code, { timeoutMs: 2500, reintentos: 0, legado: await abrirLegado() })).estado;
 }
 
 export default async (req) => {

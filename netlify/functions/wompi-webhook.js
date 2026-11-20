@@ -29,6 +29,7 @@ import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 import { enviarCorreos, limpiarPedido } from "./lib/correos.js";
 import { RE_FV20, RE_FV15, marcarCodigoUsado } from "./lib/vip.js";
 import { configSupabase } from "./lib/supabase-rest.js";
+import { abrirLegado } from "./lib/vip-legado.js";
 
 // --- Configuración pública ---
 // Google Forms queda SOLO como respaldo: se usa si Supabase no registró el pedido.
@@ -176,7 +177,7 @@ export default async (req) => {
   const cod = String(pedido.discountCode || "");
   if (pedido._serverPriced && (RE_FV20.test(cod) || RE_FV15.test(cod)) && Number(pedido.discountAmount) > 0) {
     try {
-      const rv = await marcarCodigoUsado(configSupabase(), cod, ref);
+      const rv = await marcarCodigoUsado(configSupabase(), cod, ref, { legado: await abrirLegado() });
       if (!rv.ok) console.error("wompi-webhook: no se pudo marcar el código (revisar a mano en codigos_descuento):", cod, ref, rv.motivo, rv.error || "");
     } catch (e) {
       console.error("wompi-webhook: error marcando el código (revisar a mano):", cod, ref, e && e.message);

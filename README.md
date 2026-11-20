@@ -91,3 +91,12 @@ node generar-catalogo.mjs
 Si se olvida, el sitio muestra un total y el servidor firma otro: Wompi cobra el del servidor
 y el cliente ve un numero distinto. El checkout ya avisa (actualiza el total en pantalla),
 pero es una molestia evitable.
+
+## FV20 emitidos antes de Supabase (migración perezosa)
+
+Los FV20 pedidos con la versión anterior viven solo en Netlify Blobs (`vip-codigos`). `lib/vip-legado.js`
+los busca allí cuando un código o un correo no está en Supabase (vip-codigo: solicitar, verificar,
+registrado; wompi-sign; enviar-correo y ventas-registrar con FV20; wompi-webhook al marcar usado), los
+copia a Supabase conservando `creado_en` y `usado`, y responde desde Supabase. Solo lee Blobs; si Blobs
+falla se ignora. Si la copia no queda en Supabase, el código no da descuento ("sin-verificar").
+`migrar-vip-blobs.mjs` sigue disponible para copiarlos todos de una vez.
