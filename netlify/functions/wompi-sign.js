@@ -23,7 +23,8 @@
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
 import { recalcularTotal, RE_CODIGO, RE_CODIGO_VIP, configBlackFriday } from "./lib/catalogo-precios.js";
-import { STORE_VIP, estadoCodigoVip } from "./lib/vip.js";
+import { estadoCodigo } from "./lib/vip.js";
+import { configSupabase } from "./lib/supabase-rest.js";
 
 // Origenes autorizados a pedir una firma. No es la barrera de seguridad
 // (esa es el recalculo del monto), pero evita que la funcion se use desde
@@ -35,8 +36,6 @@ const ORIGENES_OK = [
   "http://localhost:3000",
   "http://127.0.0.1:5500"
 ];
-
-const VENTAS_API = "https://script.google.com/macros/s/AKfycbznN-5jCwKFFvSeKEiFuvaqwCW2DLv7OpQm6jCmEgH8w2qHIZtTfCPNsi3saPAv7j3s/exec";
 
 // La referencia la genera el navegador con el formato FV-<epoch>-<alfanum>.
 // La validamos para que nadie inyecte basura en la cadena que se firma.
@@ -58,37 +57,17 @@ function cabeceras(origen) {
 }
 
 /**
- * Verifica el codigo de descuento contra el Apps Script del Club (accion checkCode).
- * Devuelve:
- *   "valido"        -> el Club confirmo que el codigo existe y no se ha usado
- *   "invalido"      -> el Club dijo que no vale o que ya se uso  -> NO se aplica
- *   "sin-verificar" -> no se pudo consultar (red, timeout, respuesta rara)
+ * Verifica un código (FV15 o FV20) en Supabase (tabla codigos_descuento).
+ * Devuelve "valido" | "usado" | "vencido" | "invalido" | "sin-verificar".
+ * FALLA CERRADO: solo "valido" da descuento. Antes, con el Apps Script del
+ * Club, un FV15 "sin-verificar" se aplicaba igual; ahora no: si la base no
+ * contesta, el servidor cobra sin descuento, el checkout ve un total mayor
+ * que el mostrado, no abre Wompi y le dice al cliente que intente de nuevo.
+ * 2,5 s y sin reintento: ocurre DENTRO del clic de pagar, con la ventana de
+ * Wompi abierta en blanco, y el checkout corta esta llamada a los 4 s.
  */
 async function verificarCodigo(code) {
-  const ctl = new AbortController();
-  // 2,5 s, no 6: esta consulta ocurre DENTRO del clic de pagar, con la ventana
-  // emergente de Wompi ya abierta en blanco delante del cliente. Seis segundos
-  // de pantalla vacia se leen como "se colgo" y la gente cierra la ventana.
-  // Si Apps Script no contesta a tiempo se devuelve "sin-verificar" y se
-  // conserva el comportamiento del sitio (se aplica el descuento).
-  const t = setTimeout(() => ctl.abort(), 2500);
-  try {
-    const url = VENTAS_API + "?action=checkCode&code=" + encodeURIComponent(code) + "&callback=fv";
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow" });
-    if (!r.ok) return "sin-verificar";
-    const txt = await r.text();
-    // Respuesta JSONP: fv({"valid":true,...}) — extraemos el objeto.
-    const m = txt.match(/\{[\s\S]*\}/);
-    if (!m) return "sin-verificar";
-    const j = JSON.parse(m[0]);
-    if (j && j.valid === true) return "valido";
-    if (j && (j.valid === false || j.used === true)) return "invalido";
-    return "sin-verificar";
-  } catch {
-    return "sin-verificar";
-  } finally {
-    clearTimeout(t);
-  }
+  return (await estadoCodigo(configSupabase(), code, { timeoutMs: 2500, reintentos: 0 })).estado;
 }
 
 export default async (req) => {
@@ -130,11 +109,8 @@ export default async (req) => {
     return new Response(JSON.stringify({ ok: false, error: "carrito-vacio" }), { status: 400, headers: H });
   }
 
-  // --- Descuento: se aplica solo si el codigo tiene el formato del Club.
-  // Si ademas el Club responde, mandamos su veredicto. Si el Club NO responde
-  // (red caida, cuota de Apps Script), se conserva el comportamiento actual del
-  // sitio y se aplica el 15%: preferimos cobrar de menos a cobrarle al cliente
-  // un total distinto del que vio en pantalla.
+  // --- Descuento: solo si Supabase confirma que el codigo existe y no se ha
+  // usado (FV15 o FV20). Si no se puede verificar, NO se aplica.
   const codigo = String((body.discountCode || "")).trim().toUpperCase();
   // Un solo descuento por pedido (regla de Ricardo). La hora la pone ESTE
   // servidor: antes de BF_DESDE no hay Black Friday aunque el navegador crea
@@ -144,11 +120,9 @@ export default async (req) => {
   let vip = false;
   let veredicto = "sin-codigo";
   if (codigo && RE_CODIGO_VIP.test(codigo)) {
-    // FV20: almacen propio en Netlify Blobs (lib/vip.js). Si no se puede
-    // verificar NO se aplica: el checkout ve un total mayor y no abre Wompi.
-    let store = null;
-    try { store = getStore(STORE_VIP); } catch {}
-    veredicto = (await estadoCodigoVip(store, codigo)).estado;
+    // FV20 (Supabase). Si no se puede verificar NO se aplica: el checkout ve
+    // un total mayor y no abre Wompi.
+    veredicto = await verificarCodigo(codigo);
     vip = veredicto === "valido";
   } else if (codigo && RE_CODIGO.test(codigo) && bf.activo && !bf.acumulaCodigo) {
     // FV15 durante Black Friday: da el mismo 15 % que ya tienen los precios.
@@ -157,7 +131,7 @@ export default async (req) => {
     veredicto = "igual-que-black-friday";
   } else if (codigo && RE_CODIGO.test(codigo)) {
     veredicto = await verificarCodigo(codigo);
-    descuentoValido = veredicto !== "invalido";
+    descuentoValido = veredicto === "valido";
   } else if (codigo) {
     veredicto = "formato-invalido";
   }

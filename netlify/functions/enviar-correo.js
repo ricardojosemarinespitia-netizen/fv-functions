@@ -26,7 +26,8 @@
 //  sin red; esto es solo el adaptador a Netlify.
 // ============================================================
 import { procesarSolicitud } from "./lib/correos.js";
-import { STORE_VIP, estadoCodigoVip } from "./lib/vip.js";
+import { estadoCodigo } from "./lib/vip.js";
+import { configSupabase } from "./lib/supabase-rest.js";
 
 // Almacenes de Netlify Blobs (opcionales): si no cargan, el límite de abuso
 // sigue funcionando en memoria y los montos se recalculan con el catálogo.
@@ -62,10 +63,9 @@ export default async (req) => {
     ? async (ref) => storePedidos.get(ref, { type: "json" }).catch(() => null)
     : null;
 
-  // Pedido por WhatsApp con FV20: el 20 % solo sale en el correo si el
-  // almacén VIP dice que el código es válido.
-  const storeVip = metodo === "POST" ? await abrirStore(STORE_VIP) : null;
-  const verificarVip = async (codigo) => (await estadoCodigoVip(storeVip, codigo)).estado;
+  // Pedido por WhatsApp con FV20: el 20 % solo sale en el correo si
+  // Supabase (codigos_descuento) dice que el código es válido.
+  const verificarVip = async (codigo) => (await estadoCodigo(configSupabase(), codigo, { timeoutMs: 3000, reintentos: 1 })).estado;
 
   const r = await procesarSolicitud(
     { metodo, origen, ip, cuerpo },

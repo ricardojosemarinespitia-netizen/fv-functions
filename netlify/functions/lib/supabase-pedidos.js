@@ -1,164 +1,116 @@
 // ============================================================
-//  supabase-pedidos  ·  Registro ADICIONAL de pedidos en Supabase
+//  supabase-pedidos  ·  Registro de pedidos en Supabase (fuente de verdad)
 // ------------------------------------------------------------
-//  Este modulo NO reemplaza el registro en Google Forms (paso 6 de
-//  wompi-webhook.js) — es un registro EN PARALELO, agregado como
-//  respaldo mas confiable. Google Forms sigue corriendo exactamente
-//  igual y no se toca.
+//  Desde nov-2026 Supabase es LA base de datos del sitio (antes era un
+//  registro adicional a Google Forms). La llaman:
+//    - wompi-webhook.js   pagos por Wompi aprobados (origen "webhook")
+//    - ventas-registrar.js pedidos por WhatsApp     (origen "whatsapp",
+//                          estado_pago "PENDIENTE": Felipe confirma el pago)
 //
-//  Por que existe: hoy los pedidos se registran via un POST
-//  fire-and-forget desde el navegador del cliente a Google Forms
-//  (checkout.html), que ya demostro perder ventas reales (casos
-//  Diego Cantor y Pilar Espana, ago-2026) cuando el navegador
-//  embebido de Instagram/Facebook corta la peticion a medias. Este
-//  modulo se llama en cambio desde wompi-webhook.js, que corre en
-//  el servidor y no depende del navegador del cliente.
+//  Qué escribe, en este orden:
+//    1. clientes        upsert por email (datos de contacto al día)
+//    2. pedidos         insert por referencia (UNIQUE): si ya existía, no se
+//                       toca (el service_role NO tiene UPDATE en pedidos, a
+//                       propósito: los pedidos son de solo agregar)
+//    3. pedidos_items   una fila por pieza, solo si el pedido es nuevo
+//    4. suscriptores    el correo del comprador con origen "compra" si no
+//                       estaba (no pisa a quien ya está en el Círculo)
 //
-//  DISENO A PROPOSITO DEFENSIVO — nunca puede tumbar una venta:
-//    - Si faltan SUPABASE_URL o SUPABASE_SERVICE_KEY, no hace nada
-//      y no lanza. Asi, borrar esas variables en Netlify es el
-//      rollback instantaneo (sin deploy) a "como si esto no existiera".
-//    - Cada llamada a la API tiene timeout de 4s (AbortController).
-//    - El que llama a esta funcion (wompi-webhook.js) SIEMPRE la
-//      envuelve en su propio try/catch — pero por si acaso, aqui
-//      tambien se atrapa cualquier error y solo se hace
-//      console.error, nunca se relanza hacia afuera.
-//
-//  Variables de entorno requeridas en Netlify (si faltan, no pasa
-//  nada — ver arriba):
-//    SUPABASE_URL          -> Project URL (Supabase > Settings > API)
-//    SUPABASE_SERVICE_KEY  -> service_role key (Supabase > Settings > API)
-//      OJO: la service_role key ignora RLS. Nunca debe viajar al
-//      navegador ni vivir en el repo del sitio estatico.
-//
-//  Idempotencia: pedidos.referencia es UNIQUE en la base. Si el
-//  webhook se dispara dos veces para el mismo pedido, el segundo
-//  intento de insert es ignorado por la base (on_conflict=referencia,
-//  Prefer: resolution=ignore-duplicates) — no se duplica nada.
+//  DISEÑO DEFENSIVO — nunca puede tumbar una venta:
+//    - Sin SUPABASE_URL / SUPABASE_SERVICE_KEY no hace nada (motivo
+//      "sin-configurar") y el que llama usa su respaldo (Google Forms en el
+//      webhook, la hoja en ventas-registrar).
+//    - Timeout de 4 s y un reintento corto por llamada (lib/supabase-rest.js).
+//    - Nunca lanza: devuelve {ok, motivo}.
 // ============================================================
+import { sbFetch, configSupabase } from "./supabase-rest.js";
+import { guardarSuscriptor } from "./vip.js";
 
-const FETCH_TIMEOUT_MS = 4000;
-
-async function fetchConTimeout(url, opciones) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...opciones, signal: ctl.signal });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-// Registra el cliente, el pedido y sus líneas en Supabase.
-// `ref` = referencia del pedido (ej. FV-1788187888658-JG258)
-// `pedido` = el objeto guardado en Netlify Blobs (fullName, email, phone,
-//            address, city, cart, total, subtotal, discount, etc.)
-// `tx` = la transacción de Wompi tal como llegó en el evento del webhook
-export async function registrarEnSupabase(ref, pedido, tx) {
-  const URL_BASE = process.env.SUPABASE_URL;
-  const KEY = process.env.SUPABASE_SERVICE_KEY;
-
-  if (!URL_BASE || !KEY) {
-    // Sin configurar todavia (o se borró a propósito como rollback).
-    // No es un error: simplemente esta funcion no hace nada.
-    return { ok: false, motivo: "sin-configurar" };
-  }
-
-  const headersBase = {
-    "Content-Type": "application/json",
-    apikey: KEY,
-    Authorization: `Bearer ${KEY}`
-  };
+/**
+ * @param {string} ref   referencia FV-<epoch>-<sufijo>
+ * @param {object} pedido  el objeto del pedido (fullName, email, phone, address, city,
+ *                         department, zipCode, cart, subtotal, discountAmount, shipping,
+ *                         total, discountCode, deliveryMethod, paymentMethod, notes…)
+ * @param {object|null} tx   transacción de Wompi (webhook) o null
+ * @param {{origen?, estado?, db?, fetchFn?}} opts
+ * @returns {Promise<{ok:boolean, motivo:string, error?:string}>}
+ */
+export async function registrarEnSupabase(ref, pedido, tx, opts = {}) {
+  const db = opts.db !== undefined ? opts.db : configSupabase();
+  if (!db) return { ok: false, motivo: "sin-configurar" };
+  const fetchFn = opts.fetchFn;
 
   try {
     const cart = Array.isArray(pedido.cart) ? pedido.cart : [];
-    const email = (pedido.email || "").trim().toLowerCase();
+    const email = String(pedido.email || "").trim().toLowerCase();
+    const cp = pedido.zipCode || pedido.zip || null;
 
-    // 1) upsert del cliente por email (crea o actualiza sus datos de contacto)
+    // 1) cliente
     let clienteId = null;
     if (email) {
-      const rCliente = await fetchConTimeout(`${URL_BASE}/rest/v1/clientes?on_conflict=email`, {
+      const rc = await sbFetch(db, "/rest/v1/clientes?on_conflict=email", {
         method: "POST",
-        headers: { ...headersBase, Prefer: "resolution=merge-duplicates,return=representation" },
-        body: JSON.stringify([
-          {
-            email,
-            nombre: pedido.fullName || null,
-            telefono: pedido.phone || null,
-            documento: pedido.docId || null,
-            ciudad: pedido.city || null,
-            departamento: pedido.department || null,
-            direccion: pedido.address || null,
-            codigo_postal: pedido.zip || null
-          }
-        ])
-      });
-      if (rCliente.ok) {
-        const filas = await rCliente.json().catch(() => []);
-        clienteId = Array.isArray(filas) && filas[0] ? filas[0].id : null;
-      } else {
-        console.error("supabase-pedidos: upsert cliente falló", rCliente.status, await rCliente.text().catch(() => ""));
-      }
-    }
-
-    // 2) insert del pedido (ignora si la referencia ya existe — idempotencia)
-    const subtotal = Number(pedido.subtotal) || 0;
-    // Antes leia pedido.discount, campo que ningun flujo escribe (el pedido trae
-    // discountAmount): el descuento del Club quedaba SIEMPRE en 0 en Supabase.
-    // Con Black Friday, "subtotal" ya viene con precios finales; el ahorro de la
-    // campana (descuentoBF/subtotalLista/bfPct) queda en payload_raw.
-    const descuento = Number(pedido.discountAmount != null ? pedido.discountAmount : pedido.discount) || 0;
-    const envio = Number(pedido.shipping) || 0;
-    const total = Number(pedido.total) || 0;
-
-    const rPedido = await fetchConTimeout(`${URL_BASE}/rest/v1/pedidos?on_conflict=referencia`, {
-      method: "POST",
-      headers: { ...headersBase, Prefer: "resolution=ignore-duplicates,return=representation" },
-      body: JSON.stringify([
-        {
-          referencia: ref,
-          cliente_id: clienteId,
-          cliente_nombre: pedido.fullName || null,
-          cliente_email: email || null,
-          cliente_telefono: pedido.phone || null,
-          cliente_documento: pedido.docId || null,
-          direccion: pedido.address || null,
+        prefer: "resolution=merge-duplicates,return=representation",
+        body: [{
+          email,
+          nombre: pedido.fullName || null,
+          telefono: pedido.phone || null,
+          documento: pedido.docId || null,
           ciudad: pedido.city || null,
           departamento: pedido.department || null,
-          codigo_postal: pedido.zip || null,
-          metodo_entrega: pedido.deliveryMethod || null,
-          notas: pedido.notes || null,
-          subtotal,
-          descuento,
-          codigo_descuento: pedido.discountCode || null,
-          envio,
-          total,
-          metodo_pago: pedido.paymentMethod || "wompi",
-          estado_pago: (tx && tx.status) || "APPROVED",
-          wompi_tx_id: (tx && tx.id) || null,
-          wompi_status: (tx && tx.status) || null,
-          origen: "webhook",
-          cart_raw: cart,
-          payload_raw: pedido
-        }
-      ])
+          direccion: pedido.address || null,
+          codigo_postal: cp
+        }],
+        fetchFn
+      });
+      if (rc.ok) clienteId = Array.isArray(rc.datos) && rc.datos[0] ? rc.datos[0].id : null;
+      else console.error("supabase-pedidos: upsert cliente falló", rc.status, rc.error);
+    }
+
+    // 2) pedido
+    // Antes leia pedido.discount, campo que ningun flujo escribe (el pedido trae
+    // discountAmount). Con Black Friday, "subtotal" ya viene con precios finales;
+    // el ahorro de la campana (descuentoBF/subtotalLista/bfPct) queda en payload_raw.
+    const rp = await sbFetch(db, "/rest/v1/pedidos?on_conflict=referencia", {
+      method: "POST",
+      prefer: "resolution=ignore-duplicates,return=representation",
+      body: [{
+        referencia: ref,
+        cliente_id: clienteId,
+        cliente_nombre: pedido.fullName || null,
+        cliente_email: email || null,
+        cliente_telefono: pedido.phone || null,
+        cliente_documento: pedido.docId || null,
+        direccion: pedido.address || null,
+        ciudad: pedido.city || null,
+        departamento: pedido.department || null,
+        codigo_postal: cp,
+        metodo_entrega: pedido.deliveryMethod || null,
+        notas: pedido.notes || null,
+        subtotal: Number(pedido.subtotal) || 0,
+        descuento: Number(pedido.discountAmount != null ? pedido.discountAmount : pedido.discount) || 0,
+        codigo_descuento: pedido.discountCode || null,
+        envio: Number(pedido.shipping) || 0,
+        total: Number(pedido.total) || 0,
+        metodo_pago: pedido.paymentMethod || "wompi",
+        estado_pago: opts.estado || (tx && tx.status) || "APPROVED",
+        wompi_tx_id: (tx && tx.id) || null,
+        wompi_status: (tx && tx.status) || null,
+        origen: opts.origen || "webhook",
+        cart_raw: cart,
+        payload_raw: pedido
+      }],
+      fetchFn
     });
-
-    if (!rPedido.ok) {
-      console.error("supabase-pedidos: insert pedido falló", rPedido.status, await rPedido.text().catch(() => ""));
-      return { ok: false, motivo: "insert-pedido-fallo" };
+    if (!rp.ok) {
+      console.error("supabase-pedidos: insert pedido falló", rp.status, rp.error);
+      return { ok: false, motivo: "insert-pedido-fallo", error: rp.error };
     }
+    // Con ignore-duplicates, si la referencia ya existía no vuelven filas.
+    const pedidoId = Array.isArray(rp.datos) && rp.datos[0] ? rp.datos[0].id : null;
 
-    const filasPedido = await rPedido.json().catch(() => []);
-    // Si ignore-duplicates evitó el insert (ya existía), no vienen filas —
-    // en ese caso no hay nada más que hacer, el pedido ya estaba registrado.
-    const pedidoId = Array.isArray(filasPedido) && filasPedido[0] ? filasPedido[0].id : null;
-    if (!pedidoId) {
-      return { ok: true, motivo: "ya-existia" };
-    }
-
-    // 3) insert de las líneas del pedido (una fila por producto/color)
-    if (cart.length) {
+    // 3) líneas (solo para un pedido nuevo: así un reintento no las duplica)
+    if (pedidoId && cart.length) {
       const items = cart.map((i) => ({
         pedido_id: pedidoId,
         producto_id: i.id || i.productId || null,
@@ -169,20 +121,20 @@ export async function registrarEnSupabase(ref, pedido, tx) {
         precio_unitario: Number(i.price) || 0,
         precio_linea: (Number(i.price) || 0) * (Number(i.qty) || 1)
       }));
-
-      const rItems = await fetchConTimeout(`${URL_BASE}/rest/v1/pedidos_items`, {
-        method: "POST",
-        headers: { ...headersBase, Prefer: "return=minimal" },
-        body: JSON.stringify(items)
-      });
-
-      if (!rItems.ok) {
-        console.error("supabase-pedidos: insert items falló", rItems.status, await rItems.text().catch(() => ""));
-        return { ok: false, motivo: "insert-items-fallo" };
+      const ri = await sbFetch(db, "/rest/v1/pedidos_items", { method: "POST", prefer: "return=minimal", body: items, fetchFn });
+      if (!ri.ok) {
+        console.error("supabase-pedidos: insert items falló", ri.status, ri.error);
+        return { ok: false, motivo: "insert-items-fallo", error: ri.error };
       }
     }
 
-    return { ok: true, motivo: "registrado" };
+    // 4) suscriptor "compra" (mejor esfuerzo: no cambia el resultado)
+    if (email) {
+      const gs = await guardarSuscriptor(db, { email, nombre: pedido.fullName || null, origen: "compra" }, { fetchFn });
+      if (!gs.ok) console.error("supabase-pedidos: suscriptor compra no guardado", email, gs.error);
+    }
+
+    return { ok: true, motivo: pedidoId ? "registrado" : "ya-existia" };
   } catch (e) {
     console.error("supabase-pedidos: excepción no bloqueante:", e && e.message ? e.message : e);
     return { ok: false, motivo: "excepcion", error: e && e.message };

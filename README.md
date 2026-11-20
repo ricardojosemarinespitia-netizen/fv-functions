@@ -7,7 +7,14 @@ El sitio (GitHub Pages) las llama por HTTPS. Aqui viven los secretos; en el nave
 |---|---|---|
 | `wompi-sign` | Recalcula el total desde el catalogo del servidor y devuelve la **firma de integridad** de Wompi | `checkout.html` antes de abrir la pasarela |
 | `save-pending` | Guarda el pedido como `pending` en el blob store `pedidos` | `checkout.html` |
-| `wompi-webhook` | Recibe el evento de Wompi, **valida su firma**, registra en Forms y manda los correos | Wompi |
+| `wompi-webhook` | Recibe el evento de Wompi, **valida su firma**, marca usado el código, registra el pedido en **Supabase** (Google Forms solo si Supabase falla) y manda los correos | Wompi |
+| `vip-codigo` | Crea/recupera el FV20 (Supabase `codigos_descuento`), guarda el correo en `suscriptores`, verifica FV20 y FV15, responde "¿ya está en el Círculo?" | Círculo, `/vip`, caja de código |
+| `ventas-registrar` | Pedidos por WhatsApp a Supabase (montos del catálogo del servidor, `estado_pago = PENDIENTE`); la hoja solo como respaldo | `checkout.html` |
+| `enviar-correo` | Correos de pedido y del Círculo por Resend | `checkout.html` |
+
+**Base de datos: Supabase** (proyecto `felipe-vergel-pedidos`): `suscriptores`, `codigos_descuento`,
+`clientes`, `pedidos`, `pedidos_items`. La hoja de Google "PAGINA WEB" queda como respaldo histórico
+de solo lectura. Esquema y migración: carpeta privada `10_CLIENTES/felipe-vergel/migracion-supabase/`.
 
 `netlify/functions/lib/` no son funciones: son modulos compartidos (Netlify solo publica los
 archivos que estan en la raiz de `netlify/functions`).
@@ -29,11 +36,14 @@ Netlify > Site configuration > Environment variables.
 | `BLACK_FRIDAY_DESDE` | `wompi-sign`, `enviar-correo` | Se usa `BF_DESDE` = `2026-11-27T01:00:00-05:00` (inicio automático) |
 | `BLACK_FRIDAY_HASTA` | `wompi-sign`, `enviar-correo` | Sin fecha de fin |
 | `VIP_HASTA` | `vip-codigo`, `wompi-sign` | Vacío = los códigos FV20 no vencen |
+| `SUPABASE_URL` | todas las que leen/escriben datos | Sin Supabase: **ningún código da descuento** (falla cerrado), `vip-codigo` responde 503 y guarda el correo en el blob `pendientes-supabase`, el webhook registra en Google Forms y `ventas-registrar` en la hoja (respaldos) |
+| `SUPABASE_SERVICE_KEY` | ídem (service_role, ignora RLS) | Igual que la fila anterior. Nunca va al navegador ni al repo |
 | `RESEND_DRY_RUN` | solo pruebas | `1` = arma los correos y los devuelve sin enviarlos. **No dejarlo puesto en producción** |
 
 Los correos ya no usan EmailJS: `enviar-correo` (el sitio llama desde el navegador con
 `{tipo, datos}`) y `wompi-webhook` comparten `lib/correos.js` (plantillas + API de Resend).
-Pruebas sin red: `npm test` y `node pruebas/precios.test.mjs <products.js> <carpeta del sitio>`.
+Pruebas sin red (Supabase falso local en `test/supabase-falso.mjs`): `npm test` y
+`node pruebas/precios.test.mjs <products.js> <carpeta del sitio>`.
 
 `WOMPI_INTEGRITY` es el **secreto de integridad** (empieza por `prod_integrity_`), no la
 llave publica `pub_prod_...`. Wompi > Comercio > Desarrolladores.

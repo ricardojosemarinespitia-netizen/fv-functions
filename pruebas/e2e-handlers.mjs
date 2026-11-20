@@ -1,6 +1,7 @@
 // Prueba de punta a punta de los handlers REALES sin red:
 //   wompi-sign -> save-pending -> enviar-correo -> wompi-webhook (evento firmado) -> correos (Resend simulado)
 //   enviar-correo sin pedido guardado (WhatsApp)
+//   Supabase = servidor FALSO local (test/supabase-falso.mjs): códigos, suscriptores y pedidos.
 // Crea un stub temporal de @netlify/blobs (getStore en memoria) y lo borra al final.
 //   node pruebas/e2e-handlers.mjs
 import assert from "node:assert/strict";
@@ -8,6 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { iniciarSupabaseFalso } from "../test/supabase-falso.mjs";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const STUB = path.join(RAIZ, "node_modules", "@netlify", "blobs");
@@ -30,7 +32,10 @@ if (!yaHabia) {
 }
 const limpiar = () => { if (!yaHabia) fs.rmSync(path.join(RAIZ, "node_modules"), { recursive: true, force: true }); };
 
+const SB = await iniciarSupabaseFalso();
 try {
+  process.env.SUPABASE_URL = SB.url;
+  process.env.SUPABASE_SERVICE_KEY = SB.cfg.key;
   process.env.WOMPI_INTEGRITY = "secreto_de_prueba";
   process.env.WOMPI_EVENTS_SECRET = "eventos_de_prueba";
   process.env.RESEND_API_KEY = "re_falsa_de_prueba";
@@ -42,7 +47,9 @@ try {
 
   // Red: solo "responde" Resend (simulado); todo lo demás se bloquea y se anota.
   const resend = []; const bloqueadas = [];
+  const fetchReal = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url).startsWith(SB.url)) return fetchReal(url, init);
     if (String(url) === "https://api.resend.com/emails") {
       resend.push({ headers: init.headers, cuerpo: JSON.parse(init.body) });
       return new Response(JSON.stringify({ id: "simulado" }), { status: 200 });
@@ -160,9 +167,51 @@ try {
   // 8) Origen ajeno
   assert.equal((await correo(req("enviar-correo", { tipo: "club", datos: {} }, "https://evil.example"))).status, 403);
 
-  // Lo único que intentó salir (y se bloqueó): Google Forms / Apps Script.
-  assert.ok(bloqueadas.every((u) => /docs\.google\.com|script\.google\.com/.test(u)), "salida inesperada: " + bloqueadas.join(", "));
-  console.log("OK e2e: firma, guardado, enviar-correo, webhook firmado e idempotente, inicio de BF por hora, FV20 completo (rechazado no gasta, aprobado gasta, reuso sin descuento, reemplaza BF), FV15 en BF no se gasta. Salidas bloqueadas:", bloqueadas.length);
+  // 9) Supabase quedó como fuente de verdad: pedidos aprobados, código usado, suscriptores
+  const pedidosDb = SB.db.pedidos.map((p) => p.referencia).sort();
+  assert.deepEqual(pedidosDb, [ref, refV2].sort(), "solo los pagos APROBADOS quedan en pedidos");
+  const pAna = SB.db.pedidos.find((p) => p.referencia === ref);
+  assert.equal(pAna.total, 462825); assert.equal(pAna.wompi_tx_id, "tx-1"); assert.equal(pAna.origen, "webhook");
+  assert.equal(SB.db.pedidos_items.filter((i) => i.pedido_id === pAna.id).length, 2);
+  const cV = SB.db.codigos_descuento.find((c) => c.codigo === COD);
+  assert.equal(cV.usado, true); assert.equal(cV.referencia_pedido, refV2);
+  const sus = Object.fromEntries(SB.db.suscriptores.map((x) => [x.email, x.origen]));
+  assert.equal(sus["vera@example.com"], "vip", "pidió su código en /vip y luego compró: sigue como vip");
+  assert.equal(sus["ana@example.com"], "compra"); assert.equal(sus["post@example.com"], "circulo");
+
+  // 10) FV15 histórico fuera de Black Friday: Supabase lo valida, da 15 % y se gasta al aprobar
+  process.env.BLACK_FRIDAY_DESDE = "2099-01-01T00:00:00-05:00";
+  SB.db.codigos_descuento.push({ codigo: "FV15-HISTO12", tipo: "FV15", email: "histo@example.com", usado: false, usado_en: null, referencia_pedido: null, origen: "circulo" });
+  const ref15 = "FV-1795000000030-CLUBQ";
+  const f15 = await (await sign(req("wompi-sign", { ref: ref15, items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-HISTO12" }))).json();
+  assert.equal(f15.resumen.veredictoCodigo, "valido"); assert.equal(f15.resumen.descuento, 44850); assert.equal(f15.resumen.codigo, "FV15-HISTO12");
+  await save(req("save-pending", { ref: ref15, fullName: "Histo", email: "histo@example.com", deliveryMethod: "bucaramanga", paymentMethod: "pse", cart: [{ id: "lampara-caribe-brisa", qty: 1, price: 299000, name: "Lámpara Caribe Brisa", color: "Azul" }] }));
+  assert.equal((await hook(firmarEvento("tx-15", "APPROVED", ref15, f15.amountInCents))).status, 200);
+  assert.equal(SB.db.codigos_descuento.find((c) => c.codigo === "FV15-HISTO12").referencia_pedido, ref15);
+  const r15b = await (await sign(req("wompi-sign", { ref: "FV-1795000000031-CLUBR", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-HISTO12" }))).json();
+  assert.equal(r15b.resumen.veredictoCodigo, "usado"); assert.equal(r15b.resumen.descuento, 0);
+  // FV15 que no existe en la base: sin descuento (antes "sin-verificar" se aplicaba igual)
+  const r15c = await (await sign(req("wompi-sign", { ref: "FV-1795000000032-CLUBS", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-NOEXIST" }))).json();
+  assert.equal(r15c.resumen.veredictoCodigo, "invalido"); assert.equal(r15c.resumen.descuento, 0);
+
+  // 11) Supabase CAÍDO: el cobro va sin descuento (falla cerrado) y el webhook usa Google Forms de respaldo
+  assert.equal(bloqueadas.length, 0, "con Supabase arriba no se escribe en Google: " + bloqueadas.join(", "));
+  SB.db.codigos_descuento.push({ codigo: "FV15-CAIDO12", tipo: "FV15", email: "cai@example.com", usado: false });
+  SB.modo = "caido";
+  const errOrig = console.error; console.error = () => {};
+  try {
+    const fc = await (await sign(req("wompi-sign", { ref: "FV-1795000000040-CAIDO", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-CAIDO12" }))).json();
+    assert.equal(fc.resumen.veredictoCodigo, "sin-verificar"); assert.equal(fc.resumen.descuento, 0); assert.equal(fc.amountInCents, 29900000);
+    await save(req("save-pending", { ref: "FV-1795000000040-CAIDO", fullName: "Cai", email: "cai@example.com", deliveryMethod: "bucaramanga", paymentMethod: "pse", cart: [{ id: "lampara-caribe-brisa", qty: 1, price: 299000, name: "Lámpara Caribe Brisa", color: "Azul" }] }));
+    resend.length = 0;
+    assert.equal((await hook(firmarEvento("tx-c", "APPROVED", "FV-1795000000040-CAIDO", 29900000))).status, 200);
+    assert.equal(resend.length, 2, "los correos salen igual");
+  } finally { console.error = errOrig; }
+  assert.deepEqual(bloqueadas.map((u) => new URL(u).host), ["docs.google.com"], "respaldo: un envío a Google Forms");
+  SB.modo = "ok";
+
+  console.log("OK e2e: firma, guardado, enviar-correo, webhook firmado e idempotente, inicio de BF por hora, FV20 completo (rechazado no gasta, aprobado gasta, reuso sin descuento, reemplaza BF), FV15 en BF no se gasta, FV15 histórico validado y gastado en Supabase, pedidos y suscriptores en Supabase, Supabase caído = sin descuento + respaldo en Forms.");
 } finally {
   limpiar();
+  await SB.cerrar();
 }

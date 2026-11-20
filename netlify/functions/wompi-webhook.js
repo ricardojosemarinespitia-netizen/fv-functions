@@ -5,9 +5,12 @@
 //  cambia de estado. Cuando el pago queda APROBADO:
 //    1. Valida la firma del evento (WOMPI_EVENTS_SECRET)
 //    2. Recupera el pedido guardado por save-pending (por referencia)
-//    3. Lo registra en Google Forms (la "base de datos")
-//    4. Envía los correos a Felipe y al cliente vía Resend (lib/correos.js,
+//    3. Marca usado el código de descuento (Supabase codigos_descuento)
+//    4. Lo registra en Supabase (clientes, pedidos, pedidos_items,
+//       suscriptores). Google Forms solo como respaldo si Supabase falla.
+//    5. Envía los correos a Felipe y al cliente vía Resend (lib/correos.js,
 //       el mismo módulo que usa la función enviar-correo)
+//  Variables de Supabase: SUPABASE_URL y SUPABASE_SERVICE_KEY.
 //
 //  Así el pedido se registra AUNQUE el cliente cierre la ventana
 //  de Wompi sin dar "Volver al comercio".
@@ -24,14 +27,12 @@ import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 import { registrarEnSupabase } from "./lib/supabase-pedidos.js";
 import { enviarCorreos, limpiarPedido } from "./lib/correos.js";
-import { STORE_VIP, RE_FV20, marcarVipUsado } from "./lib/vip.js";
+import { RE_FV20, RE_FV15, marcarCodigoUsado } from "./lib/vip.js";
+import { configSupabase } from "./lib/supabase-rest.js";
 
 // --- Configuración pública ---
+// Google Forms queda SOLO como respaldo: se usa si Supabase no registró el pedido.
 const FORM_ID             = "1FAIpQLSflsK1YlaHGgdxFdOQ4pvnrF_cA0KUnLUVubAlO2eD3LBfm4Q";
-const VENTAS_API           = "https://script.google.com/macros/s/AKfycbznN-5jCwKFFvSeKEiFuvaqwCW2DLv7OpQm6jCmEgH8w2qHIZtTfCPNsi3saPAv7j3s/exec";
-// Clave que el Apps Script exige desde el 27-jul-2026 para ESCRIBIR
-// (markUsed). Mismo secreto que usa checkout.html del sitio principal.
-const VENTAS_KEY           = "Pjh5zFh5RhYW";
 
 const fmt = (n) => "$" + (Number(n) || 0).toLocaleString("es-CO");
 
@@ -166,22 +167,36 @@ export default async (req) => {
     return new Response(`Sin pedido pendiente para ${ref}`, { status: 200 });
   }
 
-  // 3.5) Código VIP (FV20): se gasta SOLO aquí, con el pago APROBADO por Wompi,
-  //      y solo si fue el código que dio el descuento cobrado (wompi-sign
-  //      guarda discountCode únicamente en ese caso). Va ANTES de la
-  //      idempotencia: si el navegador ya marcó el pedido como "done", el
-  //      código igual tiene que quedar usado. marcarVipUsado es idempotente.
-  if (pedido._serverPriced && RE_FV20.test(String(pedido.discountCode || "")) && Number(pedido.discountAmount) > 0) {
+  // 3.5) Código de descuento (FV20 o FV15): se gasta SOLO aquí, con el pago
+  //      APROBADO por Wompi, y solo si fue el código que dio el descuento
+  //      cobrado (wompi-sign guarda discountCode únicamente en ese caso). Va
+  //      ANTES de la idempotencia: si el navegador ya marcó el pedido como
+  //      "done", el código igual tiene que quedar usado. Es idempotente
+  //      (Supabase: codigos_descuento, filtro usado=false).
+  const cod = String(pedido.discountCode || "");
+  if (pedido._serverPriced && (RE_FV20.test(cod) || RE_FV15.test(cod)) && Number(pedido.discountAmount) > 0) {
     try {
-      const rv = await marcarVipUsado(getStore(STORE_VIP), pedido.discountCode, ref);
-      if (!rv.ok) console.error("wompi-webhook: no se pudo marcar el FV20", pedido.discountCode, rv.motivo);
+      const rv = await marcarCodigoUsado(configSupabase(), cod, ref);
+      if (!rv.ok) console.error("wompi-webhook: no se pudo marcar el código (revisar a mano en codigos_descuento):", cod, ref, rv.motivo, rv.error || "");
     } catch (e) {
-      console.error("wompi-webhook: error marcando FV20 (revisar a mano):", pedido.discountCode, ref, e && e.message);
+      console.error("wompi-webhook: error marcando el código (revisar a mano):", cod, ref, e && e.message);
     }
   }
 
   // 4) Idempotencia: si ya se procesó (aquí o en el navegador), no repetir
+  //    correos ni respaldo. PERO el pedido igual tiene que quedar en Supabase:
+  //    cuando el cliente vuelve de Wompi, el navegador lo marca "done" y ya
+  //    no escribe en ninguna base (antes iba a la hoja); el único que lo
+  //    registra es este webhook. registrarEnSupabase es idempotente.
   if (pedido._status === "done") {
+    if (pedido._serverPriced && pedido.email && Array.isArray(pedido.cart) && pedido.cart.length) {
+      try {
+        const r = await registrarEnSupabase(ref, pedido, tx);
+        if (!r.ok) console.error("wompi-webhook: pedido 'done' sin registrar en Supabase (revisar a mano):", ref, r.motivo);
+      } catch (e) {
+        console.error("wompi-webhook: Supabase (pedido done):", ref, e && e.message);
+      }
+    }
     return new Response("Ya estaba procesado", { status: 200 });
   }
 
@@ -234,32 +249,36 @@ export default async (req) => {
     .join("\n");
   const entrega = `${pedido.address || ""}${pedido.city ? ", " + pedido.city : ""}`;
 
-  // 6) Registrar en Google Forms (misma estructura que guardarPedido)
+  // 6) Registrar en Supabase (fuente de verdad): cliente, pedido, piezas y el
+  //    correo del comprador en suscriptores (origen "compra").
+  let enSupabase = { ok: false, motivo: "no-intentado" };
   try {
-    const productos = cart
-      .map((i) => `${i.qty}× ${i.sku ? `[${i.sku}] ` : ""}${i.name} (${i.color}) — ${fmt(i.price * i.qty)}`)
-      .join(" | ");
-    const qty = cart.reduce((s, i) => s + i.qty, 0);
-    const desc = `PEDIDO #${ref} · ${pedido.email} · ${productos} · Total ${fmt(pedido.total)} [AUTO/WEBHOOK]`;
-    const fd = new URLSearchParams();
-    fd.append("entry.297753956", pedido.fullName || "");
-    fd.append("entry.1064695391", entrega);
-    fd.append("entry.1732518498", pedido.phone || "");
-    fd.append("entry.1495498498", desc);
-    fd.append("entry.932926498", String(qty));
-    await fetch(`https://docs.google.com/forms/d/e/${FORM_ID}/formResponse`, { method: "POST", body: fd });
-  } catch (e) {
-    console.error("Google Forms:", e);
-  }
-
-  // 6.5) Registrar tambien en Supabase (ADICIONAL — Google Forms sigue arriba
-  //      y no se toca). Si falta la variable de entorno o Supabase no responde,
-  //      esto no hace nada y el flujo sigue: el pedido YA quedo en Google y los
-  //      correos se mandan igual abajo.
-  try {
-    await registrarEnSupabase(ref, pedido, tx);
+    enSupabase = await registrarEnSupabase(ref, pedido, tx);
   } catch (e) {
     console.error("Supabase (no bloqueante):", e);
+  }
+
+  // 6.5) RESPALDO: solo si Supabase NO registró el pedido (caído, pausado o sin
+  //      variables), se manda a Google Forms como antes para no perder la venta.
+  //      Con Supabase funcionando esta escritura era redundante y se quitó.
+  if (!enSupabase.ok) {
+    console.error("wompi-webhook: Supabase no registró", ref, "(", enSupabase.motivo, ") -> respaldo en Google Forms");
+    try {
+      const productos = cart
+        .map((i) => `${i.qty}× ${i.sku ? `[${i.sku}] ` : ""}${i.name} (${i.color}) — ${fmt(i.price * i.qty)}`)
+        .join(" | ");
+      const qty = cart.reduce((s, i) => s + i.qty, 0);
+      const desc = `PEDIDO #${ref} · ${pedido.email} · ${productos} · Total ${fmt(pedido.total)} [AUTO/WEBHOOK]`;
+      const fd = new URLSearchParams();
+      fd.append("entry.297753956", pedido.fullName || "");
+      fd.append("entry.1064695391", entrega);
+      fd.append("entry.1732518498", pedido.phone || "");
+      fd.append("entry.1495498498", desc);
+      fd.append("entry.932926498", String(qty));
+      await fetch(`https://docs.google.com/forms/d/e/${FORM_ID}/formResponse`, { method: "POST", body: fd });
+    } catch (e) {
+      console.error("Google Forms (respaldo):", e);
+    }
   }
 
   // 7) Correos (Felipe + cliente)
@@ -277,24 +296,8 @@ export default async (req) => {
     console.error("Correos (no bloqueante):", e);
   }
 
-  // 8) Marcar código de descuento como usado (si aplica)
-  //    El Apps Script (deployment AKfycbznN, la misma hoja "PAGINA WEB" que
-  //    usa el resto del sitio) dejo de aceptar escrituras sin clave el
-  //    27-jul-2026: antes cualquiera con la URL podia marcar cualquier
-  //    codigo como usado sin autorizacion. Ahora exige VENTAS_KEY.
-  //    (FV20 no: ese se marcó arriba en el almacén VIP.)
-  if (pedido.discountCode && !RE_FV20.test(String(pedido.discountCode))) {
-    try {
-      await fetch(VENTAS_API, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ key: VENTAS_KEY, action: "markUsed", code: pedido.discountCode, ref, email: pedido.email })
-      });
-    } catch (e) {
-      console.error("markUsed:", e);
-    }
-  }
+  // 8) (El código de descuento ya se marcó usado en el paso 3.5, en Supabase.
+  //    Antes los FV15 se marcaban aquí en la hoja vía Apps Script "markUsed".)
 
   // 9) Marcar como procesado (idempotencia)
   await store.setJSON(ref, { ...pedido, _status: "done", _processedAt: Date.now() });

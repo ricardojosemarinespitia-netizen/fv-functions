@@ -694,7 +694,9 @@ export const LIMITES = {
   pedido: { ip: 12, destinatario: 4, global: 60, ventanaMs: 60 * 60 * 1000 },
   club: { ip: 6, destinatario: 2, global: 150, ventanaMs: 60 * 60 * 1000 },
   vip: { ip: 8, destinatario: 3, global: 200, ventanaMs: 60 * 60 * 1000 },
-  vipVerificar: { ip: 40, destinatario: 40, global: 2000, ventanaMs: 60 * 60 * 1000 }
+  vipVerificar: { ip: 40, destinatario: 40, global: 2000, ventanaMs: 60 * 60 * 1000 },
+  // ventas-registrar (pedidos por WhatsApp a Supabase)
+  venta: { ip: 12, destinatario: 6, global: 150, ventanaMs: 60 * 60 * 1000 }
 };
 
 /** true = permitido. */
