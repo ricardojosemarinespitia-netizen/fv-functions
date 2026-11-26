@@ -530,12 +530,12 @@ function correoVipCliente(c) {
   const nota = c.soloBF
     ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. Vale solo mientras dure Black Friday. Tu 20&nbsp;% reemplaza el 15&nbsp;% de la tienda: los descuentos no se acumulan.`
     : esFV10
-    ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: durante Black Friday el 15&nbsp;% ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
+    ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos.`
     : `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20&nbsp;% reemplaza el 15&nbsp;%.`;
   const notaTxt = c.soloBF
     ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. Vale solo mientras dure Black Friday. Tu 20 % reemplaza el 15 % de la tienda: los descuentos no se acumulan.`
     : esFV10
-    ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: durante Black Friday el 15 % ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
+    ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos.`
     : `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20 % reemplaza el 15 %.`;
   const cuerpo =
     `<p style="font-family:${SANS};font-size:15px;line-height:1.8;color:${C.texto};margin:0 0 24px;">Este es tu código personal para comprar cualquier pieza de la tienda con ${pct}&nbsp;% de descuento sobre el precio de lista:</p>` +

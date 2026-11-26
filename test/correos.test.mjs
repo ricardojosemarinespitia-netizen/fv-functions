@@ -11,10 +11,10 @@ globalThis.fetch = async (url) => { throw new Error("RED BLOQUEADA en pruebas: "
 const CLAVE_FALSA = "re_clave_de_prueba_no_real";
 // Black Friday YA iniciado (inicio simulado en el pasado). ENV_PRE = antes del lanzamiento.
 const YA = "2026-01-01T00:00:00-05:00";
-const ENV = { RESEND_API_KEY: CLAVE_FALSA, BLACK_FRIDAY_DESDE: YA };
+const ENV = { RESEND_API_KEY: CLAVE_FALSA, BLACK_FRIDAY_ACTIVO: "1", BLACK_FRIDAY_DESDE: YA };
 const ENV_SIN_BF = { ...ENV, BLACK_FRIDAY_ACTIVO: "false" };
 const ENV_PRE = { RESEND_API_KEY: CLAVE_FALSA, BLACK_FRIDAY_DESDE: "2099-01-01T00:00:00-05:00" };
-const ENV_DRY = { RESEND_DRY_RUN: "1", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", EMAIL_FELIPE: "avisos@felipevergel.com", BLACK_FRIDAY_DESDE: YA };
+const ENV_DRY = { RESEND_DRY_RUN: "1", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", EMAIL_FELIPE: "avisos@felipevergel.com", BLACK_FRIDAY_ACTIVO: "1", BLACK_FRIDAY_DESDE: YA };
 const ORIGEN = "https://felipevergel.com";
 const REF = "FV-1788187888658-JG258";
 

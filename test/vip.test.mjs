@@ -16,7 +16,7 @@ const SB = await iniciarSupabaseFalso();
 const nuevaBase = () => { for (const k of Object.keys(SB.db)) SB.db[k].length = 0; SB.modo = "ok"; return SB.cfg; };
 const codigosEnBase = () => SB.db.codigos_descuento.length + SB.db.suscriptores.length;
 const O = "https://felipevergel.com";
-const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", BLACK_FRIDAY_DESDE: "2099-01-01T00:00:00-05:00" };
+const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", BLACK_FRIDAY_ACTIVO: "1", BLACK_FRIDAY_DESDE: "2099-01-01T00:00:00-05:00" };
 const req = (body, extra = {}) => ({ metodo: "POST", origen: O, ip: "1.1.1.1", cuerpo: JSON.stringify(body), ...extra });
 const pedir = (email, extra = {}) => ({ accion: "solicitar", origen: "vip", nombre: "Ana", email, web: "", ...extra });
 

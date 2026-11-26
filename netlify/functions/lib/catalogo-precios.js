@@ -29,7 +29,7 @@ export { CATALOGO };
 //  La HORA la decide el reloj del SERVIDOR (Date.now() de Netlify), nunca el
 //  del navegador: antes de BF_DESDE se cobra precio de lista.
 export const PCT_BLACK_FRIDAY = 15;
-export const BF_ACTIVO_POR_DEFECTO = true;
+export const BF_ACTIVO_POR_DEFECTO = false; // apagado el 2026-11-26 por orden de Ricardo
 // Viernes 27-nov-2026, 1:00 a. m. hora de Colombia (UTC-5). MISMO valor que
 // FV_BF.desde en products.js (las pruebas lo comparan).
 export const BF_DESDE = "2026-11-27T01:00:00-05:00";

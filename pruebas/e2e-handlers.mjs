@@ -41,7 +41,7 @@ try {
   process.env.RESEND_API_KEY = "re_falsa_de_prueba";
   process.env.EMAIL_FELIPE = "avisos@felipevergel.com";
   process.env.RESEND_FROM = "Felipe Vergel <pedidos@felipevergel.com>";
-  delete process.env.BLACK_FRIDAY_ACTIVO; delete process.env.RESEND_DRY_RUN; delete process.env.VIP_HASTA;
+  process.env.BLACK_FRIDAY_ACTIVO = "1"; delete process.env.RESEND_DRY_RUN; delete process.env.VIP_HASTA;
   // Pasos 1-5: Black Friday YA iniciado (inicio simulado en el pasado).
   process.env.BLACK_FRIDAY_DESDE = "2026-01-01T00:00:00-05:00";
 
