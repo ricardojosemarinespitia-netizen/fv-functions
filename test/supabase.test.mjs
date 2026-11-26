@@ -25,7 +25,7 @@ const SB = await iniciarSupabaseFalso();
 const db = SB.cfg;
 const limpiar = () => { for (const k of Object.keys(SB.db)) SB.db[k].length = 0; SB.modo = "ok"; salidas.length = 0; _reiniciarLimites(); };
 const O = "https://felipevergel.com";
-const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>" };
+const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", BLACK_FRIDAY_DESDE: "2099-01-01T00:00:00-05:00" };
 const req = (body, extra = {}) => ({ metodo: "POST", origen: O, ip: "1.1.1.1", cuerpo: JSON.stringify(body), ...extra });
 const silencio = async (fn) => { const o = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = o; } };
 

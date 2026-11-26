@@ -29,10 +29,10 @@ export { CATALOGO };
 //  La HORA la decide el reloj del SERVIDOR (Date.now() de Netlify), nunca el
 //  del navegador: antes de BF_DESDE se cobra precio de lista.
 export const PCT_BLACK_FRIDAY = 15;
-export const BF_ACTIVO_POR_DEFECTO = false; // apagado el 2026-11-26 por orden de Ricardo
-// Viernes 27-nov-2026, 1:00 a. m. hora de Colombia (UTC-5). MISMO valor que
+export const BF_ACTIVO_POR_DEFECTO = true;
+// Activo desde el 26-nov-2026 (orden de Ricardo), hora de Colombia. MISMO valor que
 // FV_BF.desde en products.js (las pruebas lo comparan).
-export const BF_DESDE = "2026-11-27T01:00:00-05:00";
+export const BF_DESDE = "2026-11-26T00:00:00-05:00";
 export const BF_HASTA = null;            // no se inventa fecha de fin
 export const BF_ACUMULA_CODIGO = false;  // regla de Ricardo: nunca se acumulan descuentos
 
