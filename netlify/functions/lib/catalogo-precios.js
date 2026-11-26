@@ -33,7 +33,7 @@ export const BF_ACTIVO_POR_DEFECTO = true;
 // Activo desde el 26-nov-2026 (orden de Ricardo), hora de Colombia. MISMO valor que
 // FV_BF.desde en products.js (las pruebas lo comparan).
 export const BF_DESDE = "2026-11-26T00:00:00-05:00";
-export const BF_HASTA = null;            // no se inventa fecha de fin
+export const BF_HASTA = "2026-11-30T01:00:00-05:00"; // fin ordenado por Ricardo; MISMO valor que FV_BF.hasta
 export const BF_ACUMULA_CODIGO = false;  // regla de Ricardo: nunca se acumulan descuentos
 
 const SI = ["1", "true", "si", "sí", "on", "yes"];

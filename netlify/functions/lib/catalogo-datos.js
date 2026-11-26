@@ -70,4 +70,4 @@ export const CATALOGO = {
 // Interruptor del sitio (window.FV_BF de products.js) en el momento de
 // generar. Solo lo usan las pruebas para avisar si cliente y servidor
 // quedaron con un % distinto. El cobro NO lo lee: manda PCT_BLACK_FRIDAY.
-export const FV_BF_SITIO = {"activo":true,"pct":15,"etiqueta":"Black Friday","desde":"2026-11-26T00:00:00-05:00","hasta":null,"acumulaCodigo":false};
+export const FV_BF_SITIO = {"activo":true,"pct":15,"etiqueta":"Black Friday","desde":"2026-11-26T00:00:00-05:00","hasta":"2026-11-30T01:00:00-05:00","acumulaCodigo":false};
