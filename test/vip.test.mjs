@@ -16,7 +16,7 @@ const SB = await iniciarSupabaseFalso();
 const nuevaBase = () => { for (const k of Object.keys(SB.db)) SB.db[k].length = 0; SB.modo = "ok"; return SB.cfg; };
 const codigosEnBase = () => SB.db.codigos_descuento.length + SB.db.suscriptores.length;
 const O = "https://felipevergel.com";
-const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>" };
+const ENV = { RESEND_DRY_RUN: "1", EMAIL_FELIPE: "avisos@felipevergel.com", RESEND_FROM: "Felipe Vergel <pedidos@felipevergel.com>", BLACK_FRIDAY_DESDE: "2099-01-01T00:00:00-05:00" };
 const req = (body, extra = {}) => ({ metodo: "POST", origen: O, ip: "1.1.1.1", cuerpo: JSON.stringify(body), ...extra });
 const pedir = (email, extra = {}) => ({ accion: "solicitar", origen: "vip", nombre: "Ana", email, web: "", ...extra });
 
@@ -182,6 +182,56 @@ await prueba("sin RESEND_API_KEY ni DRY_RUN: el código igual se crea y se muest
 await prueba("generador: formato FV20 y FV10, alfabeto sin 0/O/1/I/L", async () => {
   for (let i = 0; i < 300; i++) { const c = generarCodigoVip(); assert.match(c, RE_FV20); assert.ok(!/[01OIL]/.test(c.slice(5))); }
   for (let i = 0; i < 300; i++) { const c = generarCodigoCirculo(); assert.match(c, RE_FV10); assert.ok(!/[01OIL]/.test(c.slice(5))); }
+});
+
+// ── Black Friday: el Círculo entrega 20 % ───────────────────
+const DESDE = "2026-11-27T01:00:00-05:00";
+const ENV_BF = { ...ENV, BLACK_FRIDAY_DESDE: DESDE };
+const EN_BF = Date.parse(DESDE) + 3600e3, ANTES = Date.parse(DESDE) - 3600e3;
+const circ = (email) => req({ accion: "solicitar", origen: "circulo", nombre: "Bea", email, web: "" });
+
+await prueba("BF: Círculo entrega FV20 de campaña (20 %), correo lo explica, repetir devuelve el mismo", async () => {
+  const db = nuevaBase();
+  const r = await procesarVip(circ("bf@example.com"), { db, env: ENV_BF, ahora: EN_BF });
+  assert.match(r.body.codigo, RE_FV20); assert.equal(r.body.pct, 20); assert.equal(r.body.soloBF, true);
+  const [felipe, cliente] = r.body.correos;
+  assert.ok(felipe.subject.startsWith("Nuevo código Black Friday del Círculo (20 %)"));
+  assert.ok(cliente.text.includes("mientras dure Black Friday") && cliente.text.includes("no se acumulan"));
+  const b = await procesarVip(circ("bf@example.com"), { db, env: ENV_BF, ahora: EN_BF + 1000 });
+  assert.equal(b.body.codigo, r.body.codigo); assert.equal(SB.db.codigos_descuento.length, 1);
+});
+
+await prueba("BF: quien tenía FV10 recibe además su FV20; al terminar BF vence y el Círculo vuelve al FV10", async () => {
+  const db = nuevaBase();
+  const antes = await procesarVip(circ("v@example.com"), { db, env: ENV_BF, ahora: ANTES });
+  assert.match(antes.body.codigo, RE_FV10);
+  const en = await procesarVip(circ("v@example.com"), { db, env: ENV_BF, ahora: EN_BF });
+  assert.match(en.body.codigo, RE_FV20);
+  const fin = { ...ENV_BF, BLACK_FRIDAY_HASTA: "2026-12-01T00:00:00-05:00" };
+  const despues = Date.parse("2026-12-02T00:00:00-05:00");
+  assert.equal((await estadoCodigo(db, en.body.codigo, { env: ENV_BF, ahora: EN_BF })).estado, "valido");
+  assert.equal((await estadoCodigo(db, en.body.codigo, { env: fin, ahora: despues })).estado, "vencido");
+  const otra = await procesarVip(circ("v@example.com"), { db, env: fin, ahora: despues });
+  assert.equal(otra.body.codigo, antes.body.codigo); assert.equal(otra.body.pct, 10);
+});
+
+await prueba("BF: /vip convierte el FV20 de campaña en normal (sigue válido después)", async () => {
+  const db = nuevaBase();
+  const en = await procesarVip(circ("p@example.com"), { db, env: ENV_BF, ahora: EN_BF });
+  const v = await procesarVip(req(pedir("p@example.com")), { db, env: ENV_BF, ahora: EN_BF + 1000 });
+  assert.equal(v.body.codigo, en.body.codigo); assert.equal(v.body.soloBF, false);
+  const fin = { ...ENV_BF, BLACK_FRIDAY_HASTA: "2026-12-01T00:00:00-05:00" };
+  assert.equal((await estadoCodigo(db, en.body.codigo, { env: fin, ahora: Date.parse("2026-12-02T00:00:00-05:00") })).estado, "valido");
+});
+
+await prueba("BF: un FV20 de Círculo anterior a la campaña no se toca (vale antes, durante y después)", async () => {
+  const db = nuevaBase();
+  SB.db.codigos_descuento.push({ codigo: "FV20-ABCDEFG", tipo: "FV20", email: "h@example.com", origen: "circulo", usado: false, creado_en: "2026-10-01T00:00:00Z" });
+  const fin = { ...ENV_BF, BLACK_FRIDAY_HASTA: "2026-12-01T00:00:00-05:00" };
+  for (const [env, ahora] of [[ENV_BF, ANTES], [ENV_BF, EN_BF], [fin, Date.parse("2026-12-02T00:00:00-05:00")]]) {
+    assert.equal((await estadoCodigo(db, "FV20-ABCDEFG", { env, ahora })).estado, "valido");
+    assert.equal((await procesarVip(circ("h@example.com"), { db, env, ahora })).body.codigo, "FV20-ABCDEFG");
+  }
 });
 
 await SB.cerrar();

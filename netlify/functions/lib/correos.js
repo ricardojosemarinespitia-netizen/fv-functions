@@ -527,10 +527,14 @@ function correoVipCliente(c) {
   const esFV10 = c.tipo === "FV10" || /^FV10-/.test(c.codigo || "");
   const pct = esFV10 ? 10 : 20;
   const asunto = `Tu código personal del ${pct} %`;
-  const nota = esFV10
+  const nota = c.soloBF
+    ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. Vale solo mientras dure Black Friday. Tu 20&nbsp;% reemplaza el 15&nbsp;% de la tienda: los descuentos no se acumulan.`
+    : esFV10
     ? `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: durante Black Friday el 15&nbsp;% ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
     : `Escríbelo en &laquo;¿Tienes un código de descuento?&raquo; al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20&nbsp;% reemplaza el 15&nbsp;%.`;
-  const notaTxt = esFV10
+  const notaTxt = c.soloBF
+    ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. Vale solo mientras dure Black Friday. Tu 20 % reemplaza el 15 % de la tienda: los descuentos no se acumulan.`
+    : esFV10
     ? `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: durante Black Friday el 15 % ya está en todos los precios, así que este código es para tus compras fuera de esa campaña.`
     : `Escríbelo en "¿Tienes un código de descuento?" al pagar. No se suma a otros descuentos: si Black Friday está activo, tu 20 % reemplaza el 15 %.`;
   const cuerpo =
@@ -561,7 +565,7 @@ Felipe Vergel · Arte en Vidrio
 
 function correoVipFelipe(c) {
   const esFV10 = c.tipo === "FV10" || /^FV10-/.test(c.codigo || "");
-  const etiqueta = esFV10 ? "Nuevo código del Círculo (10 %)" : "Nuevo código VIP";
+  const etiqueta = esFV10 ? "Nuevo código del Círculo (10 %)" : c.soloBF ? "Nuevo código Black Friday del Círculo (20 %)" : "Nuevo código VIP";
   const asunto = `${etiqueta} · ${c.nombre}`;
   const cuerpo =
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">` +

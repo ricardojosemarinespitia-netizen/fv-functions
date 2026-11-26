@@ -18,6 +18,10 @@
 //   - Círculo: quien ya tiene FV20 recibe ESE (nunca se le baja a 10 %); quien
 //     no, recibe su FV10. Por /vip: quien solo tiene FV10 recibe un FV20 nuevo
 //     (los dos coexisten, se usa uno solo: nunca se suman).
+//   - DURANTE BLACK FRIDAY el Círculo entrega un FV20 (20 % sobre lista; no se
+//     suma al 15 % público). Ese FV20 (origen "circulo", creado desde el inicio
+//     de la campaña) solo vale mientras Black Friday esté activo. Si la persona
+//     pide luego su código por /vip, pasa a ser un FV20 normal.
 //   - Un solo uso: se marca usado SOLO cuando Wompi aprueba (wompi-webhook).
 //     Si el pago falla, sigue válido.
 //   - FV20 vence en VIP_HASTA (ISO 8601). Vacío = no vence. FV15 no vence.
@@ -28,6 +32,7 @@
 import crypto from "node:crypto";
 import { sbFetch, filtro } from "./supabase-rest.js";
 import { legadoPorCodigo, legadoPorCorreo, importarLegado } from "./vip-legado.js";
+import { configBlackFriday } from "./catalogo-precios.js";
 //  `legado` (opcional en todas las funciones) = almacén viejo de Netlify Blobs
 //  "vip-codigos". Si un FV20 o un correo no está en Supabase se busca allí y
 //  se copia (ver lib/vip-legado.js). Sin `legado`, todo funciona igual.
@@ -59,7 +64,14 @@ export function configVip(env = (typeof process !== "undefined" ? process.env : 
 
 const T = "/rest/v1/codigos_descuento";
 const S = "/rest/v1/suscriptores";
-const CAMPOS = "codigo,tipo,email,usado,usado_en,referencia_pedido,creado_en";
+const CAMPOS = "codigo,tipo,email,origen,usado,usado_en,referencia_pedido,creado_en";
+
+/** ¿FV20 entregado por el Círculo en Black Friday (vale solo durante la campaña)? */
+export function esCirculoBF(reg, env, ahora = Date.now()) {
+  if (!reg || reg.tipo !== "FV20" || reg.origen !== "circulo") return false;
+  const desde = Date.parse(configBlackFriday(env, ahora).desde || "");
+  return !Number.isNaN(desde) && Date.parse(reg.creado_en) >= desde;
+}
 
 /**
  * Estado de un código FV20, FV15 o FV10. Nunca lanza.
@@ -85,7 +97,10 @@ export async function estadoCodigo(db, codigo, { env, ahora = Date.now(), timeou
   }
   if (!reg) return { estado: "invalido" };
   if (reg.usado) return { estado: "usado", registro: reg };
-  if (reg.tipo === "FV20") {
+  if (esCirculoBF(reg, env, ahora)) {
+    // No depende de VIP_HASTA: dura lo que dure Black Friday.
+    if (!configBlackFriday(env, ahora).activo) return { estado: "vencido", registro: reg };
+  } else if (reg.tipo === "FV20") {
     const { hastaMs } = configVip(env);
     if (hastaMs != null && ahora >= hastaMs) return { estado: "vencido", registro: reg };
   }
@@ -110,20 +125,32 @@ const fv10DeCorreo = (db, email, fetchFn) => codigoDeCorreo(db, email, "FV10", f
  * SupabaseNoDisponible si la base no responde: nunca inventa un código que no
  * quedó guardado.
  *   origen "vip"     -> su FV20 (si solo tenía FV10, se crea el FV20: coexisten)
- *   origen "circulo" -> su FV20 si ya lo tiene (nunca se le baja); si no, su FV10
- * @returns {{codigo, tipo:"FV20"|"FV10", pct:20|10, nuevo:boolean, registro}}
+ *   origen "circulo" -> su FV20 si ya lo tiene (nunca se le baja); si no, en
+ *                       Black Friday un FV20 de campaña y fuera de ella su FV10
+ * @returns {{codigo, tipo:"FV20"|"FV10", pct:20|10, nuevo:boolean, soloBF:boolean, registro}}
  */
-export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.now(), rnd, fetchFn, legado } = {}) {
+export async function obtenerOCrearCodigo(db, { email, origen }, { env, ahora = Date.now(), rnd, fetchFn, legado } = {}) {
   if (!db) throw new SupabaseNoDisponible("sin-configurar");
   const e = normalizarEmail(email);
   const salida = (registro, nuevo) => {
     const tipo = registro.tipo === "FV10" ? "FV10" : "FV20";
-    return { codigo: registro.codigo, tipo, pct: tipo === "FV10" ? 10 : 20, nuevo, registro };
+    return { codigo: registro.codigo, tipo, pct: tipo === "FV10" ? 10 : 20, nuevo, soloBF: esCirculoBF(registro, env, ahora), registro };
   };
+  const esCirculo = origen === "circulo";
+  const bfActivo = configBlackFriday(env, ahora).activo;
   // 1) ¿ya tiene FV20 (Supabase o Blobs viejo)? Sirve para los dos orígenes.
   const previo = await fv20DeCorreo(db, e, fetchFn);
-  if (previo) return salida(previo, false);
-  if (legado) {
+  if (previo && !esCirculoBF(previo, env, ahora)) return salida(previo, false);
+  if (previo) {
+    if (!esCirculo) {
+      // Pide su código por /vip: su FV20 de campaña pasa a ser un FV20 normal.
+      const r = await sbFetch(db, `${T}?codigo=eq.${filtro(previo.codigo)}`, { method: "PATCH", body: { origen: "vip" }, prefer: "return=representation", fetchFn });
+      if (!r.ok) throw new SupabaseNoDisponible("promover-fv20", r.error);
+      return salida({ ...previo, origen: "vip" }, false);
+    }
+    if (bfActivo) return salida(previo, false);
+    // Círculo fuera de Black Friday: el FV20 de campaña ya no vale; va su FV10.
+  } else if (legado) {
     // Migración perezosa: si este correo ya tenía su FV20 en Blobs, es ESE.
     const viejo = await legadoPorCorreo(legado, e);
     if (viejo && (await importarLegado(db, viejo, { fetchFn }))) {
@@ -131,15 +158,15 @@ export async function obtenerOCrearCodigo(db, { email, origen }, { ahora = Date.
       if (ya) return salida(ya, false);
     }
   }
-  const esCirculo = origen === "circulo";
-  // 2) Círculo sin FV20: su FV10 (el que ya tenga, o uno nuevo).
-  if (esCirculo) {
+  // 2) Círculo fuera de Black Friday: su FV10 (el que ya tenga, o uno nuevo).
+  const pideFV10 = esCirculo && !bfActivo;
+  if (pideFV10) {
     const p10 = await fv10DeCorreo(db, e, fetchFn);
     if (p10) return salida(p10, false);
   }
-  const tipo = esCirculo ? "FV10" : "FV20";
+  const tipo = pideFV10 ? "FV10" : "FV20";
   for (let i = 0; i < 5; i++) {
-    const registro = { codigo: esCirculo ? generarCodigoCirculo(rnd) : generarCodigoVip(rnd), tipo, email: e, origen: origen || "vip", creado_en: new Date(ahora).toISOString(), usado: false };
+    const registro = { codigo: pideFV10 ? generarCodigoCirculo(rnd) : generarCodigoVip(rnd), tipo, email: e, origen: origen || "vip", creado_en: new Date(ahora).toISOString(), usado: false };
     const r = await sbFetch(db, T, { method: "POST", body: registro, prefer: "return=representation", fetchFn });
     if (r.ok) return salida((Array.isArray(r.datos) && r.datos[0]) || registro, true);
     if (r.status === 409) {

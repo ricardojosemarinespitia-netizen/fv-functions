@@ -180,11 +180,19 @@ try {
   // 7e) FV15 durante BF: mismo 15 %, no se guarda como código (no se gasta)
   const s5 = await (await sign(req("wompi-sign", { ref: "FV-1795000000024-CLUBF", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: "FV15-ABC1234" }))).json();
   assert.equal(s5.resumen.subtotal, 254150); assert.equal(s5.resumen.descuento, 0); assert.equal(s5.resumen.codigo, ""); assert.equal(s5.resumen.veredictoCodigo, "igual-que-black-friday");
-  // 7e2) FV10 durante BF: el 15 % público es mayor; se acepta pero no resta ni se guarda (no se gasta)
+  // 7e2) Círculo durante BF: FV20 de campaña (20 % sobre lista, reemplaza al 15 %)
   const jc2 = await (await vipFn(req("vip-codigo", { accion: "solicitar", origen: "circulo", email: "cira2@example.com", web: "" }))).json();
+  assert.match(jc2.codigo, /^FV20-/); assert.equal(jc2.pct, 20); assert.equal(jc2.soloBF, true);
   const s6 = await (await sign(req("wompi-sign", { ref: "FV-1795000000053-CIRBF", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: jc2.codigo }))).json();
-  assert.equal(s6.resumen.subtotal, 254150); assert.equal(s6.resumen.descuento, 0); assert.equal(s6.resumen.codigo, ""); assert.equal(s6.resumen.veredictoCodigo, "menor-que-black-friday"); assert.equal(s6.resumen.tipoDescuento, "bf");
-  assert.equal((await (await vipFn(req("vip-codigo", { accion: "verificar", codigo: jc2.codigo }))).json()).estado, "valido", "en BF el FV10 no se gasta");
+  assert.equal(s6.resumen.subtotal, 299000); assert.equal(s6.resumen.descuentoBF, 0); assert.equal(s6.resumen.descuento, 59800); assert.equal(s6.amountInCents, 23920000);
+  const verC2 = async () => (await (await vipFn(req("vip-codigo", { accion: "verificar", codigo: jc2.codigo }))).json()).estado;
+  assert.equal(await verC2(), "valido");
+  // al terminar Black Friday ese código deja de valer
+  process.env.BLACK_FRIDAY_HASTA = "2026-01-02T00:00:00-05:00";
+  assert.equal(await verC2(), "vencido");
+  const s7 = await (await sign(req("wompi-sign", { ref: "FV-1795000000054-CIRFIN", items: [{ id: "lampara-caribe-brisa", qty: 1 }], deliveryMethod: "bucaramanga", discountCode: jc2.codigo }))).json();
+  assert.equal(s7.resumen.descuento, 0);
+  delete process.env.BLACK_FRIDAY_HASTA;
   // 7f) Correo de pedido por WhatsApp con FV20 válido: el 20 % sale en el correo
   resend.length = 0;
   const waV = await correo(req("enviar-correo", { tipo: "pedido", datos: { ref: "FV-1795000000025-WAVIP", fullName: "Post", email: "post@example.com", paymentMethod: "whatsapp", deliveryMethod: "bucaramanga", discountCode: jv2.codigo, total: 239200, subtotal: 299000, cart: [{ id: "lampara-caribe-brisa", qty: 1, name: "Lámpara Caribe Brisa", color: "Azul", price: 254150 }] } }));

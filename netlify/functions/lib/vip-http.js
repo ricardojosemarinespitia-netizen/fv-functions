@@ -5,7 +5,8 @@
 //    -> crea (o recupera) el código personal de ese correo, lo envía por Resend
 //       y lo devuelve para mostrarlo en pantalla.
 //         origen "vip"     -> FV20 (20 %)
-//         origen "circulo" -> su FV20 si ya lo tiene; si no, FV10 (10 %)
+//         origen "circulo" -> su FV20 si ya lo tiene; si no, FV20 (20 %) durante
+//                             Black Friday (soloBF:true) y FV10 (10 %) fuera de él
 //       200 {ok:true, codigo, tipo:"FV20"|"FV10", pct:20|10, nuevo, correo:true|false}
 //       Opcional "metodo":"email"|"google" (cómo dejó el correo).
 //       El correo queda en Supabase `suscriptores` y el código en
@@ -120,7 +121,7 @@ export async function procesarVip(req, deps = {}) {
 
   let r;
   try {
-    r = await obtenerOCrearCodigo(deps.db, { email, origen: origenCodigo }, { ahora, rnd: deps.rnd, legado: deps.legado });
+    r = await obtenerOCrearCodigo(deps.db, { email, origen: origenCodigo }, { env, ahora, rnd: deps.rnd, legado: deps.legado });
   } catch (e) {
     return noDisponible("codigo", e && e.message);
   }
@@ -129,14 +130,14 @@ export async function procesarVip(req, deps = {}) {
   let correo = false;
   let correos;
   if (env.RESEND_API_KEY || esDryRun(env)) {
-    const datos = { nombre, email, codigo: r.codigo, tipo: r.tipo, origen: origenCodigo, hasta: r.tipo === "FV20" ? vipCfg.hasta : null, hastaTexto: r.tipo === "FV20" && vipCfg.hasta ? fechaLegible(vipCfg.hasta) : "" };
+    const datos = { nombre, email, codigo: r.codigo, tipo: r.tipo, origen: origenCodigo, soloBF: r.soloBF, hasta: r.tipo === "FV20" && !r.soloBF ? vipCfg.hasta : null, hastaTexto: r.tipo === "FV20" && !r.soloBF && vipCfg.hasta ? fechaLegible(vipCfg.hasta) : "" };
     const s = await enviarCorreos("vip", datos, { env, fetchFn: deps.fetchFn });
     correo = !!(s.cliente && s.cliente.ok);
     if (esDryRun(env)) correos = [s.felipe, s.cliente].filter(Boolean).map((x) => x.correo);
   } else {
     console.error("vip-codigo: falta RESEND_API_KEY; el código se muestra pero no se envía por correo.");
   }
-  const body = { ok: true, codigo: r.codigo, tipo: r.tipo, pct: r.pct, nuevo: r.nuevo, correo };
+  const body = { ok: true, codigo: r.codigo, tipo: r.tipo, pct: r.pct, nuevo: r.nuevo, soloBF: r.soloBF, correo };
   if (correos) { body.dryRun = true; body.correos = correos; }
   return resp(200, body);
 }
